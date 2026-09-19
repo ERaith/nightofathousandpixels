@@ -1,13 +1,13 @@
-// Command mockoidcd is the OpenID Connect provider that local development and
-// the end-to-end suite sign in against.
+// Command mockoidcd is the OpenID Connect provider the end-to-end stack signs
+// in against.
 //
-// It exists because neither a developer nor Playwright can sign in to Google:
-// headless browsers get flagged, and driving somebody's real account would be
-// fragile even if they were not. The usual answer to that is a test-only
-// bypass route in the application - a handler that mints a session for whoever
-// asks. This is not that, on purpose: a bypass route is a hole in production
-// that happens to be switched off, and the failure mode of leaving it switched
-// on is silent and total.
+// It exists because Playwright cannot sign in to Google. Headless browsers get
+// flagged, and driving somebody's real account would be fragile even if they
+// were not. The usual answer to that is a test-only bypass route in the
+// application - a handler that mints a session for whoever asks. This is not
+// that, on purpose: a bypass route is a hole in production that happens to be
+// switched off, and the failure mode of leaving it switched on is silent and
+// total.
 //
 // What runs here instead is a real OIDC provider. OAUTH_ISSUER_URL is already
 // configuration rather than a constant (see internal/config), so pointing it
@@ -21,20 +21,18 @@
 // leave enabled. The worst case of a misconfigured OAUTH_ISSUER_URL in
 // production is that sign-in stops working, not that it is bypassed.
 //
-// Two ways to choose who signs in:
-//
-//   - a person clicks one of the identities on the authorize page (picker.go);
-//   - a test POSTs one to /control/user before driving the flow.
-//
-// Both do the same thing -- push a user onto mockoidc's queue, which its
-// authorize endpoint pops. Neither grants anything: they decide which address
-// the provider will sign a token for, and the application still has to accept
-// that token and still has to decide whether that address is on the season's
-// whitelist.
+// Who signs in is chosen one of two ways, and both do the same thing -- push
+// a user onto mockoidc's queue, which its authorize endpoint pops. A test
+// POSTs one to /control/user below; a person clicks one of the identities on
+// the authorize page, which is picker.go's job. Neither grants anything: they
+// decide which address the provider will sign a token for, and the
+// application still has to accept that token and still has to decide whether
+// that address is on the season's whitelist.
 //
 // This command is never built into the shipped image. It is its own Dockerfile
 // stage, `--target final` does not reach it, and `go list -deps ./cmd/server`
-// does not mention mockoidc.
+// does not mention mockoidc. e2e/tests/shipped-image.spec.ts asserts both
+// against the artifact rather than trusting this comment.
 package main
 
 import (
@@ -65,7 +63,7 @@ const (
 	// compares byte for byte.
 	issuerSuffix = "/oidc"
 
-	defaultListen = ":9000"
+	defaultListen = ":9085"
 
 	readHeaderTimeout = 10 * time.Second
 	shutdownTimeout   = 5 * time.Second
@@ -82,7 +80,7 @@ func run() error {
 	clientID := strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID"))
 	clientSecret := strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET"))
 	if issuer == "" || clientID == "" || clientSecret == "" {
-		return errors.New("OAUTH_ISSUER_URL, OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET must all be set, and must match what the application is given")
+		return errors.New("OAUTH_ISSUER_URL, OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET must all be set, and must match what the application under test is given")
 	}
 
 	users, err := loadDevUsers()
@@ -108,12 +106,14 @@ func run() error {
 
 	// mockoidc derives every URL it advertises - issuer, authorize, token,
 	// userinfo, jwks - from m.Server.Addr. Setting it by hand is what lets the
-	// address the provider ADVERTISES differ from the address it LISTENS on.
-	// Under `make dev` the two are the same, because the application runs on
-	// the host and reaches this container through its published port, exactly
-	// as the browser does. The end-to-end stack is where they differ, and
-	// there the application is put in this process's network namespace so
-	// "localhost:<port>" means one socket for both.
+	// address the provider ADVERTISES differ from the address it LISTENS on,
+	// and that difference is load-bearing here: the application reaches this
+	// process from inside a container while the browser reaches it from the
+	// host, and OIDC allows exactly one issuer string for both. The compose
+	// stack resolves that by giving the application and this process the same
+	// network namespace, so "localhost:<port>" means the same thing to the
+	// container, and the published port makes it mean the same thing to the
+	// browser.
 	//
 	// This server is not started by mockoidc.Start: the mux below is ours, so
 	// that the picker and the control endpoint can sit next to the protocol
@@ -127,8 +127,9 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(mockoidc.DiscoveryEndpoint, m.Discovery)
-	// The picker wraps authorize; everything else is mockoidc's handler
-	// mounted directly.
+	// The picker wraps authorize so a person can choose an identity; it
+	// delegates to m.Authorize unmodified once one is chosen, and stands
+	// aside entirely when /control/user has already queued one.
 	mux.Handle(mockoidc.AuthorizationEndpoint, pickUser(m, users))
 	mux.HandleFunc(mockoidc.TokenEndpoint, m.Token)
 	mux.HandleFunc(mockoidc.UserinfoEndpoint, m.Userinfo)
@@ -139,8 +140,8 @@ func run() error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	listen := strings.TrimSpace(os.Getenv("MOCKOIDC_LISTEN"))
-	if listen == "" {
+	listen := os.Getenv("MOCKOIDC_LISTEN")
+	if strings.TrimSpace(listen) == "" {
 		listen = defaultListen
 	}
 	ln, err := net.Listen("tcp", listen)
@@ -156,9 +157,6 @@ func run() error {
 	serveErr := make(chan error, 1)
 	go func() {
 		log.Printf("mockoidcd: listening on %s, advertising issuer %s, client_id %s", ln.Addr(), m.Issuer(), m.ClientID)
-		for _, u := range users {
-			log.Printf("mockoidcd: offering %s (%s) sub=%s", u.Email, u.Note, u.Subject())
-		}
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return
@@ -212,12 +210,16 @@ type userRequest struct {
 	EmailVerified *bool `json:"email_verified"`
 }
 
-// queueUser lets a test say who the next sign-in is, without a browser.
+// queueUser lets a test say who the next sign-in is. mockoidc's authorize
+// endpoint pops one user per call and falls back to its own default when the
+// queue is empty, so a test that cares about identity pushes first and a test
+// that does not gets a stable default.
 //
 // This endpoint is on the PROVIDER, not on the application. It grants nothing:
 // pushing a user here only decides which email address the provider will sign
-// a token for. It is the mock equivalent of choosing which Google account to
-// click.
+// a token for, and the application still has to accept that token, and still
+// has to decide whether that address is on the season's whitelist. It is the
+// mock equivalent of choosing which Google account to click.
 func queueUser(m *mockoidc.MockOIDC) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -282,8 +284,8 @@ func hasScope(scopes []string, want string) bool {
 }
 
 // namedClaims is the wrapped claim set. jwt only marshals it, but the
-// interface it has to satisfy is about validation, so the accessors are
-// delegated verbatim by embedding.
+// interface it has to satisfy is about validation, so the six accessors are
+// delegated verbatim.
 type namedClaims struct {
 	jwt.Claims
 	name string

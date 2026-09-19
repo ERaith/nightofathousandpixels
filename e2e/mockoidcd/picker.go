@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/oauth2-proxy/mockoidc"
 
@@ -34,10 +35,33 @@ func pickUser(m *mockoidc.MockOIDC, users []devusers.User) http.Handler {
 	byEmail := make(map[string]devusers.User, len(users))
 	for _, u := range users {
 		byEmail[u.Email] = u
+		log.Printf("mockoidcd: offering %s (%s) sub=%s", u.Email, u.Note, u.Subject())
 	}
+
+	// authorizing serialises the push-then-delegate pair below.
+	//
+	// mockoidc's queue is a FIFO and its Pop is destructive: authorize pops
+	// exactly one user and falls back to DefaultUser() on an empty queue.
+	// Pushing and then calling Authorize is therefore only correct if nothing
+	// can pop in between. Two authorize requests in flight at once -- two
+	// browser tabs, a double click, a test running in parallel with somebody
+	// clicking -- would otherwise be free to interleave as push(A), push(B),
+	// pop->A for B's request and pop->B for A's, signing each of them in as
+	// the other.
+	//
+	// It also makes the queued-user check below honest: without the lock,
+	// "is a user queued" could be true because another request queued it a
+	// microsecond ago and is about to consume it.
+	//
+	// Serialising authorize costs nothing here. This is a development
+	// provider; the whole point of it is that one person is clicking.
+	var authorizing sync.Mutex
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chosen := r.URL.Query().Get(userParam)
+
+		authorizing.Lock()
+		defer authorizing.Unlock()
 
 		// A queued identity wins over the picker, and silently.
 		//
@@ -60,7 +84,12 @@ func pickUser(m *mockoidc.MockOIDC, users []devusers.User) http.Handler {
 		user, ok := byEmail[chosen]
 		if !ok {
 			// An address that is not on the list is a typo in a hand-edited
-			// URL, not something to sign a token for.
+			// URL, not something to sign a token for. Explicitly an error
+			// rather than a fall-through: letting it reach m.Authorize with
+			// an empty queue would sign the visitor in as mockoidc's
+			// DefaultUser (jane.doe@example.com), who is on no whitelist, and
+			// the refusal page that followed would name an address nobody
+			// asked for.
 			http.Error(w, "unknown dev user "+chosen+" - pick one from "+r.URL.Path, http.StatusBadRequest)
 			return
 		}
@@ -72,12 +101,15 @@ func pickUser(m *mockoidc.MockOIDC, users []devusers.User) http.Handler {
 				EmailVerified:     true,
 				PreferredUsername: user.Email,
 			},
+			// namedUser, not MockUser: mockoidc emits no "name" claim, and
+			// internal/auth reads one into Identity.Name. Without the wrapper
+			// every dev identity signs in with an empty display name.
 			Name: user.DisplayName,
 		})
 		log.Printf("mockoidcd: signing in as %s (sub=%s)", user.Email, user.Subject())
 
-		// Straight into mockoidc's own handler. The queue it pops from is the
-		// one just pushed to.
+		// Straight into mockoidc's own handler, still holding the lock so
+		// that this push is the one it pops.
 		m.Authorize(w, r)
 	})
 }

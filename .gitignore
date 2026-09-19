@@ -62,10 +62,18 @@ worktrees/
 # go build artifacts
 bin/
 tmp/
-# `go build ./...` drops a main package's binary in the working directory
+# `go build ./...` drops one binary per main package into the working
+# directory. There is no wildcard that catches them without also catching
+# directories, so they are listed.
 /server
 /mockoidcd
 /seed
+
+# e2e suite (ticket G3). node_modules/ is already covered above.
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+e2e/.auth/
 
 # python bytecode
 __pycache__/
