@@ -11,18 +11,29 @@
    that as CSS custom properties on :root (see themes/README.md). It does
    NOT own layout, and it does NOT own accessibility.
 
-   Because this file loads AFTER the pack, and because everything here is
-   either (a) written against private --_tokens the pack cannot reach or
-   (b) marked !important in the accessibility sections, a pack physically
-   cannot opt out of being usable. That is deliberate. A pack that tries to
-   turn off a focus ring, shrink a tap target below 44px, drop body text
-   under 16px, or re-enable motion for someone who asked for less will lose
-   to this file every time.
+   A pack cannot opt out of being usable. That is deliberate, and it rests
+   on two things rather than on load order:
+
+     - `@layer nap-enforce` holds every accessibility floor. For !important
+       declarations the cascade reverses, so a layered important beats an
+       unlayered one at ANY specificity. Loading second is not enough on its
+       own: it only beats equal-or-lower specificity, and plain !important
+       is not enough either, because a pack's important rule at higher
+       specificity still wins.
+     - Each floor is `max(<literal>, var(--token))`, so winning the cascade
+       with a poisoned token wins nothing. A pack may raise a floor, never
+       lower it.
+
+   A pack that tries to turn off a focus ring, shrink a tap target below
+   44px, drop body text under 16px, shrink the root font size, or re-enable
+   motion for someone who asked for less loses to this file every time.
 
    RULES FOR PACK AUTHORS
      - Set the public tokens listed in section 1 on :root. Nothing else.
-     - Never set a --_ prefixed token. Those are private to this file and
-       are overwritten here regardless of what you do.
+     - Never set a --_ prefixed token. They are private to this file. You
+       CAN set one — they are ordinary custom properties — but the floors
+       are written to ignore a smaller value, so the only effect is that
+       your pack and the rendered page disagree.
      - Never write layout (display/grid/flex/position/width/margin),
        :focus / :focus-visible, or @media (prefers-reduced-motion) rules.
      - --accent must reach 4.5:1 against BOTH --bg and --surface.
@@ -38,8 +49,12 @@
      7. Forms
      8. Buttons
      9. Utilities
-    10. prefers-reduced-motion   (enforced, !important)
+    10. prefers-reduced-motion   (enforced, @layer nap-enforce)
     11. forced-colors           (enforced)
+
+   Everything in @layer nap-enforce is the accessibility floor. It is spread
+   through the file so each rule sits with the code it guards; the layer is
+   what makes it non-negotiable, not where it appears.
 
    Plain CSS. No build step, no preprocessor, no npm.
    ========================================================================== */
@@ -203,7 +218,7 @@ table {
    ========================================================================== */
 
 html {
-  font-size: 100%;                 /* respect the user's browser setting */
+  font-size: 100%;                 /* floored in @layer nap-enforce */
   -webkit-text-size-adjust: 100%;
   block-size: 100%;
 }
@@ -214,7 +229,7 @@ body {
   background-color: var(--_bg);
   color: var(--_text);
   font-family: var(--_font-body);
-  font-size: var(--_fs-body);      /* floor is 1rem — see --_fs-body */
+  font-size: var(--_fs-body);      /* floored in @layer nap-enforce */
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -327,10 +342,12 @@ hr {
    ========================================================================== */
 
 /* Every interactive element gets a visible ring. This is the catch-all, so
-   it covers elements added later by templates nobody has written yet. */
-:focus-visible {
-  outline: var(--_focus-width) solid var(--_focus) !important;
-  outline-offset: var(--_focus-offset) !important;
+   it covers elements added later by templates nobody has written yet. */@layer nap-enforce {
+
+  :focus-visible {
+    outline: var(--_focus-width) solid var(--_focus) !important;
+    outline-offset: var(--_focus-offset) !important;
+  }
 }
 
 /* The one sanctioned use of `outline: none`: mouse/touch focus only.
@@ -340,16 +357,18 @@ hr {
 }
 
 /* Belt and braces for the elements a pack is most likely to restyle. */
-a:focus-visible,
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible,
-[tabindex]:focus-visible,
-[role="button"]:focus-visible {
-  outline: var(--_focus-width) solid var(--_focus) !important;
-  outline-offset: var(--_focus-offset) !important;
+@layer nap-enforce {
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible {
+    outline: var(--_focus-width) solid var(--_focus) !important;
+    outline-offset: var(--_focus-offset) !important;
+  }
 }
 
 /* First thing in the tab order; visible the moment it is focused. */
@@ -386,24 +405,82 @@ summary:focus-visible,
 
 /* Minimum target size, WCAG 2.5.5 AAA / 2.5.8 AA. Applied to controls
    rather than to inline prose links, which the spec exempts. */
-.btn,
-button,
-[role="button"],
-input[type="button"],
-input[type="submit"],
-input[type="reset"],
-select,
-summary,
-.nav a,
-.tap {
-  min-block-size: var(--_tap);
-  min-inline-size: var(--_tap);
+@layer nap-enforce {
+  .btn,
+  button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  select,
+  summary,
+  .nav a,
+  .tap {
+    min-block-size: max(44px, var(--_tap)) !important;
+    min-inline-size: max(44px, var(--_tap)) !important;
+  }
 }
 
 /* Text inputs get the same height for a consistent, thumb-friendly form. */
-input:not([type="checkbox"]):not([type="radio"]),
-textarea {
-  min-block-size: var(--_tap);
+@layer nap-enforce {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea {
+    min-block-size: max(44px, var(--_tap)) !important;
+  }
+}
+
+
+/* --------------------------------------------------------------------------
+   The floors, gathered. Two separate things defeat a floor, and each needs
+   its own answer:
+
+   1. THE CASCADE. Loading second only beats equal-or-lower specificity, so a
+      pack needs no !important at all to win — `html body { font-size: 9px }`
+      is enough, and that is exactly how the first version of this file lost
+      both floors. !important alone is not enough either: a pack's important
+      declaration at higher specificity still wins. What does hold is the
+      layer. For important declarations the cascade reverses, and a layered
+      important beats an unlayered one at ANY specificity. Everything in
+      `@layer nap-enforce` therefore wins against any pack that does not
+      itself use @layer.
+
+   2. THE VALUE. A floor written as `var(--_tap)` resolves to whatever --_tap
+      says, and a pack can set `html body { --_tap: 8px }` on a descendant.
+      Winning the cascade with a poisoned number wins nothing, so every floor
+      below is `max(<literal>, var(--token))`: a pack may raise a floor, never
+      lower it.
+
+   Do not consume --_tap or --_fs-body bare in a rule that is meant to be a
+   floor; wrap it in max() as below.
+   -------------------------------------------------------------------------- */
+
+@layer nap-enforce {
+  /* What 1rem means. A pack winning this drags every rem-based size down
+     with it, and `html:root { font-size: 4px }` beats a plain `html` rule on
+     specificity. 100% is the reader's own browser setting, so this floors
+     packs, not people. */
+  html {
+    font-size: 100% !important;
+  }
+
+  /* Body text: 1rem, never less. */
+  body {
+    font-size: max(1rem, var(--_fs-body)) !important;
+  }
+
+  /* Small print is still body text. */
+  small,
+  .meta,
+  .field__hint {
+    font-size: 1rem !important;
+  }
+
+  /* Controls that are their own tap target but are styled elsewhere. */
+  .skip-link,
+  .wordmark,
+  .check {
+    min-block-size: max(44px, var(--_tap)) !important;
+  }
 }
 
 
@@ -796,7 +873,14 @@ textarea {
      clear 3:1 (WCAG 1.4.11) whatever the pack set --border to. Mixing the
      pack's own text colour toward its own background inherits the
      already-guaranteed text:bg contrast and lands well above the floor.
-     Browsers without color-mix() simply keep the line above. */
+
+     Without color-mix() this does NOT fall back to the `border: ... var(--_border)`
+     line above. Because the value contains var(), it is invalid at computed-value
+     time rather than dropped at parse time, so the earlier border-color is thrown
+     away and this computes to `unset` — which for border-color means currentColor.
+     That lands on --_text, so the result is higher contrast than intended rather
+     than lower, but it is luck, not design: move the `color:` declaration above
+     out of this rule and the safety goes with it. */
   border-color: color-mix(in srgb, var(--_text) 45%, var(--_bg));
   border-radius: var(--_radius);
   transition: border-color var(--_speed) var(--_ease);
@@ -963,41 +1047,43 @@ textarea:user-invalid,
    still fire and any JS waiting on them does not hang.
    ========================================================================== */
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-delay: 0ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    transition-delay: 0ms !important;
-    scroll-behavior: auto !important;
-    /* parallax and fixed-attachment backgrounds read as motion too */
-    background-attachment: initial !important;
-  }
+@layer nap-enforce {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+      /* parallax and fixed-attachment backgrounds read as motion too */
+      background-attachment: initial !important;
+    }
 
-  html,
-  body {
-    scroll-behavior: auto !important;
-  }
+    html,
+    body {
+      scroll-behavior: auto !important;
+    }
 
-  /* Anything a pack pinned behind the page stops moving as well. */
-  body::before,
-  body::after {
-    animation: none !important;
-    transition: none !important;
-  }
+    /* Anything a pack pinned behind the page stops moving as well. */
+    body::before,
+    body::after {
+      animation: none !important;
+      transition: none !important;
+    }
 
-  /* The skip link still needs to arrive; it just arrives instantly. */
-  .skip-link {
-    transition: none !important;
-  }
+    /* The skip link still needs to arrive; it just arrives instantly. */
+    .skip-link {
+      transition: none !important;
+    }
 
-  /* Templates: put autoplaying video/GIF heroes in .motion-only and they
-     disappear for these users instead of looping at them. */
-  .motion-only {
-    display: none !important;
+    /* Templates: put autoplaying video/GIF heroes in .motion-only and they
+       disappear for these users instead of looping at them. */
+    .motion-only {
+      display: none !important;
+    }
   }
 }
 

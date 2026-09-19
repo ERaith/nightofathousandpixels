@@ -252,6 +252,13 @@ test-integration: test-db-up ## Run the integration tests against a throwaway da
 lint: ## Run golangci-lint over the module
 	$(GO) tool golangci-lint run ./...
 
+# The theme-pack contract is enforced in CSS and checked by a stdlib-only
+# python script; no node, no npm, nothing to install.
+.PHONY: themes-check
+themes-check: ## Check the theme tooling and the fallback palette's contrast
+	python3 -m unittest discover -s themes -p 'test_*.py'
+	./themes/check-contrast.py --defaults
+
 # ---------------------------------------------------------------------------
 # Migrations
 # ---------------------------------------------------------------------------

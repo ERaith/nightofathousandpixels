@@ -62,3 +62,7 @@ worktrees/
 # go build artifacts
 bin/
 tmp/
+
+# python bytecode
+__pycache__/
+*.pyc

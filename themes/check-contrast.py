@@ -100,19 +100,42 @@ def report(tokens, label):
     return 1 if failures else 0
 
 
+def usage(problem):
+    """Print the problem and the docstring, and return the usage exit code."""
+    print("check-contrast: %s\n" % problem, file=sys.stderr)
+    print(__doc__)
+    return 2
+
+
 def main(argv):
+    """argv is sys.argv[1:] — the program name is NOT included."""
     if "--defaults" in argv:
         return report(DEFAULTS, "base.css fallback palette (no pack loaded)")
+
     if "--pair" in argv:
         i = argv.index("--pair")
-        fg, bg = argv[i + 1], argv[i + 2]
-        r = ratio(fg, bg)
+        operands = argv[i + 1:i + 3]
+        if len(operands) != 2:
+            return usage("--pair needs two colours, e.g. --pair '#7cc4ff' '#101219'")
+        fg, bg = operands
+        try:
+            r = ratio(fg, bg)
+        except ValueError as exc:
+            return usage(str(exc))
         print("%s on %s = %.2f:1  (4.5 = AA text, 3.0 = AA non-text)" % (fg, bg, r))
         return 0 if r >= 4.5 else 1
-    if len(argv) != 2:
-        print(__doc__)
-        return 2
-    return report(load(argv[1]), argv[1])
+
+    if len(argv) != 1:
+        return usage("expected exactly one theme pack path, got %d argument(s)" % len(argv))
+
+    path = argv[0]
+    try:
+        tokens = load(path)
+    except OSError as exc:
+        return usage("cannot read %s: %s" % (path, exc.strerror or exc))
+    except json.JSONDecodeError as exc:
+        return usage("%s is not valid JSON: %s" % (path, exc))
+    return report(tokens, path)
 
 
 if __name__ == "__main__":

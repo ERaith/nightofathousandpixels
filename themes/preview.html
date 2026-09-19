@@ -11,10 +11,17 @@
   theme pack for ticket F4.
 
   The <style> block below stands in for a theme pack. It loads FIRST, exactly
-  as a real pack will. It is deliberately a badly behaved pack: it tries to
-  kill the focus ring, shrink the body text, shrink the buttons and animate
-  the page. Tab through this document and it is obvious that base.css wins
-  every one of those arguments, because base.css loads second.
+  as a real pack will. It is deliberately a hostile pack: it tries to kill the
+  focus ring, shrink the body text, shrink the controls, poison base's private
+  tokens, shrink the root font size and animate the page.
+
+  Every one of its selectors is written to BEAT base.css rather than tie with
+  it, because loading second only wins against equal-or-lower specificity.
+  The original version of this harness used bare `body` and `.btn`, which tie
+  base's specificity and therefore lose to load order — so it passed a
+  stylesheet whose text and tap-target floors were not actually enforced. One
+  added `html` was all it took to defeat them. If you weaken these selectors
+  you are testing nothing.
 
   To preview a real pack instead, replace this <style> block with
       <link rel="stylesheet" href="portal/pack.css">
@@ -33,13 +40,38 @@
     --font-body: ui-sans-serif, system-ui, sans-serif;
   }
 
-  /* --- everything below here is a pack misbehaving, and loses to base.css --- */
-  :focus, :focus-visible { outline: none; }          /* loses: section 4 */
-  a:focus-visible { outline: 0 !important; }         /* loses: section 4 */
-  body { font-size: 11px; }                          /* loses: section 3 */
-  .btn, button { min-height: 12px; min-width: 12px; } /* loses: section 4 */
+  /* --- below here the pack misbehaves, and loses to base.css ---------------
+     Note the selectors: `html body` (0,0,2) beats `body` (0,0,1), and
+     `html:root` (0,1,1) beats `html` (0,0,1). Nothing here uses !important;
+     none of it needs to. ------------------------------------------------- */
+
+  /* Focus ring — loses: section 4 */
+  html body :focus, html body :focus-visible { outline: none; }
+  html body a:focus-visible { outline: 0 !important; }
+
+  /* Text floor — loses: sections 2 and 3 */
+  html body { font-size: 9px; }
+  html body small, html body .meta, html body .field__hint { font-size: 8px; }
+
+  /* Tap targets — loses: section 4 */
+  html body .btn, html body button, html body .nav a, html body select,
+  html body summary, html body [role="button"], html body .check,
+  html body .wordmark, html body input, html body textarea {
+    min-height: 8px; min-block-size: 8px; min-inline-size: 8px;
+  }
+
+  /* Poison base's PRIVATE tokens on a descendant, so that any floor written
+     as a bare `var(--_tap)` resolves to the pack's number even behind an
+     !important. Loses: the floors are written as max(44px, var(--_tap)). */
+  html body { --_tap: 8px; --_fs-body: 9px; }
+
+  /* Redefine what 1rem means, which would drag every rem-based floor down
+     with it. Loses: section 2's `font-size: 100% !important` on html. */
+  html:root { font-size: 4px; }
+
+  /* Motion — loses: section 10 */
   @keyframes packSpin { to { transform: rotate(360deg); } }
-  .pack-motion { animation: packSpin 1.2s linear infinite; }  /* loses: section 10 */
+  html body .pack-motion { animation: packSpin 1.2s linear infinite; }
 </style>
 
 <!-- base.css ALWAYS last. This is the contract. -->
