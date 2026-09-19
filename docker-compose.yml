@@ -65,6 +65,13 @@ services:
       OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:?OAUTH_CLIENT_ID must be set - copy .env.example to .env}
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:?OAUTH_CLIENT_SECRET must be set - copy .env.example to .env}
       COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set, at least 32 characters - copy .env.example to .env}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # How many reverse proxies stand in front of this container. The
+      # compose stack publishes the app straight onto a host port with
+      # nothing in between, so the honest answer here is zero; the deployed
+      # stack behind Nginx Proxy Manager overrides it with 1. Getting this
+      # wrong is silent either way - see internal/web/middleware/clientip.go.
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:
