@@ -17,7 +17,7 @@ templ SiteHeader(p Page) {
 			if len(p.Nav) > 0 {
 				<nav class="nav" aria-label="Primary">
 					for _, item := range p.Nav {
-						if p.isCurrent(item) {
+						if isCurrent(p, item) {
 							<a href={ item.Href } aria-current="page">{ item.Label }</a>
 						} else {
 							<a href={ item.Href }>{ item.Label }</a>

@@ -92,11 +92,11 @@ func (s *Site) Routes(r chi.Router) {
 // page builds the shell data every page shares.
 func (s *Site) page(r *http.Request) templates.Page {
 	return templates.Page{
-		Theme:  s.opts.Theme,
-		Origin: s.opts.Origin,
-		Path:   r.URL.Path,
-		Nav:    s.nav,
-		Season: s.opts.Season,
+		Theme:      s.opts.Theme,
+		Origin:     s.opts.Origin,
+		Path:       r.URL.Path,
+		Nav:        s.nav,
+		SeasonYear: s.opts.Season,
 	}
 }
 

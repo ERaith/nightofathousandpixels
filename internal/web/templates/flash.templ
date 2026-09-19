@@ -23,7 +23,7 @@ templ FlashRegion(flashes []Flash) {
 // and carries role="alert" or role="status" so a screen reader gets the same
 // information a sighted reader gets from the colour.
 templ FlashMessage(f Flash) {
-	<div class={ f.noticeClass() } role={ f.Role() }>
+	<div class={ noticeClass(f) } role={ f.Role() }>
 		<p class="mb-0">
 			<strong>{ f.Prefix() }</strong>
 			{ " " }
