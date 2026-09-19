@@ -1,0 +1,90 @@
+// prisma/schema.prisma
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Season {
+  id                   String               @id @default(cuid())
+  year                 Int                  @unique
+  name                 String               @default("")
+  lockAt               DateTime?
+  locked               Boolean              @default(false)
+  defaultSubmitLimit   Int                  @default(1)
+  createdAt            DateTime             @default(now())
+  movies               Movie[]
+  votes                Vote[]
+  submissionOverrides  SubmissionOverride[]
+  voterWhitelist       VoterWhitelist[]
+}
+
+model Movie {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  trailerUrl  String?
+  submittedBy String?
+  deviceId    String?
+  submittedAt DateTime @default(now())
+  hidden      Boolean  @default(false)
+  votes       Vote[]
+
+  @@unique([seasonId, title])
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  seasonId  String
+  season    Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  movieId   String
+  movie     Movie    @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  deviceId  String
+  email     String?
+  ipHash    String
+  createdAt DateTime @default(now())
+
+  @@unique([seasonId, deviceId])
+  @@unique([seasonId, email])
+  @@index([movieId])
+}
+
+model SubmissionOverride {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  email       String
+  limit       Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([seasonId, email])
+}
+
+model VoterWhitelist {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  email       String
+  name        String?
+  hasVoted    Boolean  @default(false)
+  votedAt     DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([seasonId, email])
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+}

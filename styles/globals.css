@@ -1,0 +1,131 @@
+/* styles/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --anim: running;
+}
+
+/* Default theme (Weyland-Yutani) */
+html {
+  --accent: 188 100% 50%;
+  --accent-2: 188 100% 70%;
+  --chrome: 60 1% 25%;
+}
+
+/* Theme overrides */
+html[data-theme="wy"] {
+  --accent: 188 100% 50%; /* cyan */
+  --accent-2: 188 100% 70%;
+  --chrome: 60 1% 25%;
+}
+
+html[data-theme="bio"] {
+  --accent: 100 90% 50%; /* lime green */
+  --accent-2: 100 90% 70%;
+  --chrome: 345 16% 12%; /* dark red */
+}
+
+body {
+  background: black;
+  background-image: url("/noise.png");
+  background-size: 512px 512px;
+  position: relative;
+}
+
+/* WEYLAND-YUTANI backplate */
+[data-theme="wy"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.25;
+  background: radial-gradient(
+      1200px 600px at 100% 0%,
+      rgba(0, 255, 255, 0.08),
+      transparent 60%
+    ),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)),
+    url("/wy-stripes.svg");
+  background-repeat: no-repeat;
+  background-position: right top, center, left bottom;
+  animation: none;
+}
+
+/* BIO-PULSE ooze */
+@keyframes ooze {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(2px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes throb {
+  0% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.2);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+[data-theme="bio"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  opacity: 0.2;
+  background: url("/bio-veins.png");
+  background-size: 600px 600px;
+  mix-blend-mode: screen;
+  animation: throb 6s ease-in-out infinite;
+  animation-play-state: var(--anim);
+}
+
+[data-theme="bio"] body::after {
+  content: "";
+  position: fixed;
+  inset: 10% 5%;
+  z-index: -1;
+  filter: blur(18px) saturate(1.2);
+  opacity: 0.25;
+  background: radial-gradient(
+      200px 120px at 20% 30%,
+      rgba(154, 255, 154, 0.25),
+      transparent 60%
+    ),
+    radial-gradient(
+      260px 140px at 70% 60%,
+      rgba(154, 255, 154, 0.18),
+      transparent 60%
+    );
+  animation: ooze 7.5s ease-in-out infinite;
+  animation-play-state: var(--anim);
+}
+
+/* UI helpers */
+.border-chrome {
+  border-color: hsl(var(--chrome));
+}
+
+.btn-accent {
+  border: 1px solid hsl(var(--accent) / 0.4);
+}
+
+.btn-accent:hover {
+  background-color: hsl(var(--accent) / 0.12);
+}
+
+.text-accent {
+  color: hsl(var(--accent));
+}
