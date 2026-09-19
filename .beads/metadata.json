@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "nightofathousandpixels",
+  "project_id": "f005cbf2-c513-4472-8b73-b2134f960c9b"
+}
