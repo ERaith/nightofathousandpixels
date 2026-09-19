@@ -1,0 +1,55 @@
+# Night of a Thousand Pixels - development-only overlay (ticket D7).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# (`make dev-up` does exactly that, and `make dev` runs it first.)
+#
+# It adds ONE thing: the OIDC provider that local development signs in against,
+# so that the whole app can be clicked through with no Google account.
+#
+# ---------------------------------------------------------------------------
+# Why this is a separate file
+# ---------------------------------------------------------------------------
+#
+# docker-compose.yml is the deployed stack as well as the local one. A mock
+# identity provider defined in it -- even behind a profile, even named
+# "dev-only" -- is one `--profile` flag away from running in production, and
+# the failure would be silent: the app would come up, sign people in, and
+# accept tokens signed by a provider that will vouch for any address it is
+# asked to. Keeping it in a file the deploy never passes to `-f` means the
+# production stack cannot start it by mistake, because it does not know it
+# exists.
+#
+# This is not a bypass. The provider speaks real OIDC and the application runs
+# its real authentication path against it: discovery, JWKS, PKCE S256, code
+# exchange, RS256 signature verification, issuer, audience, expiry and nonce.
+# The only thing that changes is which issuer OAUTH_ISSUER_URL names. There is
+# no skipAuth anywhere to leave switched on; a misconfigured issuer in
+# production means sign-in is BROKEN, not BYPASSED.
+services:
+  mockoidc:
+    build:
+      context: .
+      target: mockoidcd
+    environment:
+      # One variable, not two. The provider derives the address it advertises
+      # from the issuer it is given, so it cannot drift from what the app is
+      # configured with - and if it is handed an issuer it cannot serve, it
+      # refuses to start rather than serving a subtly different one.
+      OAUTH_ISSUER_URL: ${OAUTH_ISSUER_URL:?OAUTH_ISSUER_URL must be set - run this through `make dev-up`}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:?OAUTH_CLIENT_ID must be set - copy .env.example to .env}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:?OAUTH_CLIENT_SECRET must be set - copy .env.example to .env}
+      MOCKOIDC_LISTEN: ":${OIDC_PORT:-9000}"
+    ports:
+      # Container port and host port are deliberately the same number. Under
+      # `make dev` the application runs on the HOST, so it and the browser
+      # reach this provider through the same published port and the one issuer
+      # string in OAUTH_ISSUER_URL is correct for both.
+      - "127.0.0.1:${OIDC_PORT:-9000}:${OIDC_PORT:-9000}"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${OIDC_PORT:-9000}/oidc/.well-known/openid-configuration"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+    restart: unless-stopped

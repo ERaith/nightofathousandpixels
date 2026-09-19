@@ -86,6 +86,17 @@ const (
 	// consent screen and a password manager, short enough that a cookie
 	// captured from a shared machine is worthless.
 	flowTTL = 10 * time.Minute
+
+	// defaultHTTPTimeout bounds every outbound call to the provider:
+	// discovery, JWKS fetches and the token exchange.
+	//
+	// It is not optional. http.DefaultClient has no timeout at all, so with a
+	// nil Options.HTTPClient a provider that accepts a connection and then
+	// stalls parks the calling goroutine indefinitely -- during Callback that
+	// is a request goroutine, holding its connection, with nothing to reap it.
+	// Sign-in is on the critical path for every user, so it fails fast
+	// instead.
+	defaultHTTPTimeout = 10 * time.Second
 )
 
 // defaultScopes requests the claims this application needs and nothing else.
@@ -138,7 +149,9 @@ type Options struct {
 	Scopes []string
 
 	// HTTPClient, when set, is used for discovery, JWKS fetches and the token
-	// exchange. Tests use it to pin timeouts; production can leave it nil.
+	// exchange. Leaving it nil is fine and is the normal production case: New
+	// substitutes a client with defaultHTTPTimeout. It is never
+	// http.DefaultClient, which has no timeout.
 	HTTPClient *http.Client
 }
 
@@ -164,10 +177,13 @@ func New(ctx context.Context, opts Options) (*Authenticator, error) {
 		return nil, err
 	}
 
+	// Always a bounded client. Tests pin their own; production gets this one
+	// rather than the unbounded http.DefaultClient.
 	httpClient := opts.HTTPClient
-	if httpClient != nil {
-		ctx = oidc.ClientContext(ctx, httpClient)
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	ctx = oidc.ClientContext(ctx, httpClient)
 
 	provider, err := oidc.NewProvider(ctx, opts.IssuerURL)
 	if err != nil {
@@ -315,10 +331,10 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) (*Ident
 		return nil, fmt.Errorf("%w: no code and no error", ErrProviderDenied)
 	}
 
-	ctx := r.Context()
-	if a.httpClient != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, a.httpClient)
-	}
+	// oidc.ClientContext sets the same context key oauth2 reads, so this one
+	// call bounds both the token exchange below and any JWKS refetch that
+	// Verify triggers on key rotation.
+	ctx := oidc.ClientContext(r.Context(), a.httpClient)
 
 	token, err := a.oauth.Exchange(ctx, code, oauth2.VerifierOption(flow.Verifier))
 	if err != nil {

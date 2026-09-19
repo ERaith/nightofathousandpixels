@@ -48,6 +48,14 @@ type Options struct {
 	// Season is the year shown on the front page and in the footer. Zero means
 	// defaultSeason.
 	Season int
+
+	// Nav is the site header's navigation. Nil means templates.DefaultNav().
+	//
+	// It is a parameter rather than a constant because the links that belong
+	// in the header depend on what is mounted: C3 adds a sign-in link, and a
+	// header offering to sign you in on a build with no authentication wired
+	// up would be a dead link on the team's front door.
+	Nav []templates.NavItem
 }
 
 // Site renders the site's pages. Build one with New and mount it with Routes.
@@ -64,8 +72,11 @@ func New(opts Options) *Site {
 	if opts.Season == 0 {
 		opts.Season = defaultSeason
 	}
+	if opts.Nav == nil {
+		opts.Nav = templates.DefaultNav()
+	}
 
-	return &Site{opts: opts, nav: templates.DefaultNav()}
+	return &Site{opts: opts, nav: opts.Nav}
 }
 
 // Routes mounts the pages and the static file handler onto r, and installs the

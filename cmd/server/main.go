@@ -16,15 +16,57 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ERaith/nightofathousandpixels/internal/auth"
 	"github.com/ERaith/nightofathousandpixels/internal/config"
+	"github.com/ERaith/nightofathousandpixels/internal/signin"
+	"github.com/ERaith/nightofathousandpixels/internal/store"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
 	"github.com/ERaith/nightofathousandpixels/internal/web/health"
 	"github.com/ERaith/nightofathousandpixels/internal/web/middleware"
+	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
 )
 
+// Server-side timeouts. Without these an http.Server has none at all, so a
+// slow or stalled peer parks a goroutine and its connection indefinitely.
+// ReadHeaderTimeout alone is not enough: it bounds the headers and then stops
+// caring, so a handler that blocks on an outbound call still has nothing to
+// reap it. These are the backstop underneath auth's own client timeout.
 const (
+	// readTimeout bounds headers plus body.
+	readTimeout = 15 * time.Second
+
+	// readHeaderTimeout bounds the headers on their own, which is what stops a
+	// slowloris client from holding a connection open cheaply.
 	readHeaderTimeout = 10 * time.Second
-	shutdownTimeout   = 15 * time.Second
+
+	// writeTimeout bounds how long a handler may take to write its response.
+	// It must stay comfortably above auth's defaultHTTPTimeout: the OIDC
+	// callback makes outbound calls while the client waits, and cutting the
+	// response short at exactly that boundary would turn a slow provider into
+	// an unexplained truncated response.
+	writeTimeout = 30 * time.Second
+
+	// idleTimeout bounds a kept-alive connection between requests.
+	idleTimeout = 60 * time.Second
+
+	shutdownTimeout = 15 * time.Second
+
+	// discoveryTimeout bounds how long startup will wait for the OIDC provider
+	// to answer discovery before giving up.
+	//
+	// auth.New fails when the provider is unreachable, and that is the right
+	// behaviour: a server that boots with a broken auth configuration would
+	// otherwise only find out when the first person tried to sign in. But
+	// "unreachable" and "not up yet" look identical over one attempt, and in
+	// both the dev stack and the compose stack this process and the provider
+	// start at the same moment. So discovery is retried for this long before
+	// the failure is taken at face value. There is no fallback at the end of
+	// it: if discovery never succeeds the process exits, because the
+	// alternative is a running server on which nobody can sign in.
+	discoveryTimeout = 30 * time.Second
+
+	// discoveryRetryInterval is how often to retry within that window.
+	discoveryRetryInterval = time.Second
 )
 
 func main() {
@@ -56,10 +98,33 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// Discovery is a network call, so this is where a broken OAUTH_ISSUER_URL
+	// stops the process.
+	authenticator, err := discoverProvider(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	sessions, err := auth.NewSessions(cfg.CookieSecret, cfg.Origin, 0)
+	if err != nil {
+		return err
+	}
+	// The one cheap way to catch an ORIGIN typo in a deployed environment: a
+	// session cookie without Secure behind HTTPS is invisible until somebody
+	// looks for it.
+	logger.Info("session cookies configured",
+		slog.Bool("secure", sessions.Secure()),
+		slog.Duration("ttl", sessions.TTL()),
+		slog.String("origin", cfg.Origin),
+	)
+
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           newRouter(cfg, logger, pool),
+		Handler:           newRouter(cfg, logger, pool, authenticator, sessions),
+		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	// ListenAndServe always returns a non-nil error; ErrServerClosed is the
@@ -98,7 +163,49 @@ func run() error {
 	return <-serveErr
 }
 
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http.Handler {
+// discoverProvider runs OIDC discovery, retrying until discoveryTimeout.
+func discoverProvider(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*auth.Authenticator, error) {
+	opts := auth.Options{
+		IssuerURL:    cfg.OAuthIssuerURL,
+		ClientID:     cfg.OAuthClientID,
+		ClientSecret: cfg.OAuthClientSecret,
+		Origin:       cfg.Origin,
+		CookieSecret: cfg.CookieSecret,
+	}
+
+	deadline := time.Now().Add(discoveryTimeout)
+	for attempt := 1; ; attempt++ {
+		authenticator, err := auth.New(ctx, opts)
+		if err == nil {
+			logger.Info("oidc provider discovered",
+				slog.String("issuer", cfg.OAuthIssuerURL),
+				slog.String("redirect_uri", authenticator.RedirectURL()),
+			)
+			return authenticator, nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return nil, err
+		}
+		logger.Warn("oidc discovery failed, retrying",
+			slog.Int("attempt", attempt),
+			slog.String("issuer", cfg.OAuthIssuerURL),
+			slog.Any("error", err),
+		)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(discoveryRetryInterval):
+		}
+	}
+}
+
+func newRouter(
+	cfg *config.Config,
+	logger *slog.Logger,
+	pool *pgxpool.Pool,
+	authenticator *auth.Authenticator,
+	sessions *auth.Sessions,
+) http.Handler {
 	r := chi.NewRouter()
 	// Order is load-bearing; see the package comment on internal/web/middleware.
 	r.Use(middleware.ClientIPPolicy(cfg.TrustedProxyCount))
@@ -108,9 +215,23 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http
 
 	r.Method(http.MethodGet, "/healthz", health.NewHandler(pool, logger))
 
+	nav := []templates.NavItem{
+		{Label: "Home", Href: "/"},
+		{Label: "Sign in", Href: authenticator.LoginPath()},
+	}
+
+	signin.New(signin.Options{
+		Auth:     authenticator,
+		Sessions: sessions,
+		Store:    store.New(pool),
+		Logger:   logger,
+		Origin:   cfg.Origin,
+		Nav:      nav,
+	}).Routes(r)
+
 	// The HTML pages and /static/. Origin is only used to build absolute URLs
 	// for link previews; nothing here reads the database.
-	web.New(web.Options{Origin: cfg.Origin}).Routes(r)
+	web.New(web.Options{Origin: cfg.Origin, Nav: nav}).Routes(r)
 
 	return r
 }

@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,6 +17,28 @@ import (
 // flowCookieName holds the per-login secrets between the authorize redirect
 // and the callback.
 const flowCookieName = "nap_oauth_flow"
+
+// flowCookieLabel and flowCookieAAD separate this cookie from every other
+// cookie derived from the same COOKIE_SECRET.
+//
+// The label is HKDF's info parameter, so the flow cookie's key is
+// cryptographically independent of any other labelled key: C3's session cookie
+// derives from the same secret under its own label and cannot decrypt this
+// one, nor this one it. The AAD binds each sealed value to the cookie it was
+// sealed as, so a value cannot be lifted from one cookie and presented as
+// another even if the two ever shared a key.
+//
+// Both carry a version suffix. Changing either invalidates every outstanding
+// cookie of that kind, which for a 10-minute flow cookie costs an interrupted
+// sign-in and nothing else -- that is the cheap moment to rotate, and it is
+// why the version is here from the start rather than added once it hurts.
+//
+// C3 MUST choose its own label and AAD. Reusing these would put the session
+// cookie under the same key as the flow cookie.
+const (
+	flowCookieLabel = "nap:flow-cookie:v1"
+	flowCookieAAD   = "nap:flow-cookie:aad:v1"
+)
 
 // tokenBytes is the entropy behind state and nonce. 32 bytes is well past the
 // point where guessing is the attacker's best option.
@@ -42,17 +65,49 @@ type flowState struct {
 // separate HMAC.
 type flowCookie struct {
 	aead   cipher.AEAD
+	aad    []byte
 	secure bool
 	path   string
 }
 
 func newFlowCookie(secret string, secure bool, path string) (*flowCookie, error) {
-	// The secret is a configuration string of arbitrary length; SHA-256 turns
-	// it into the fixed 32-byte key AES-256 needs. config already rejects
-	// secrets shorter than 32 characters, so this is a widening, not a
-	// strengthening.
-	key := sha256.Sum256([]byte(secret))
-	block, err := aes.NewCipher(key[:])
+	aead, err := newCookieAEAD(secret, flowCookieLabel)
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		path = "/"
+	}
+	return &flowCookie{
+		aead:   aead,
+		aad:    []byte(flowCookieAAD),
+		secure: secure,
+		path:   path,
+	}, nil
+}
+
+// newCookieAEAD derives an AES-256-GCM AEAD for one labelled purpose from the
+// shared cookie secret.
+//
+// HKDF rather than a bare SHA-256 of the secret. The previous version hashed
+// the secret directly, which meant every cookie the application ever seals
+// would share one key: any two cookie types would be interchangeable to the
+// cipher, and the only thing keeping them apart would be the payload's shape.
+// HKDF's info parameter makes each purpose a separate key, so adding C3's
+// session cookie cannot weaken this one.
+//
+// The salt is nil, which HKDF defines as a zero salt. A salt's job is to add
+// entropy when the input keying material is low-entropy or non-uniform; here
+// the domain separation is carried by the label, and a fixed non-secret salt
+// would add nothing a constant info string does not already provide. What
+// matters is that COOKIE_SECRET is long -- config enforces at least 32
+// characters at startup.
+func newCookieAEAD(secret, label string) (cipher.AEAD, error) {
+	key, err := deriveCookieKey(secret, label)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("auth: cookie cipher: %w", err)
 	}
@@ -60,27 +115,18 @@ func newFlowCookie(secret string, secure bool, path string) (*flowCookie, error)
 	if err != nil {
 		return nil, fmt.Errorf("auth: cookie aead: %w", err)
 	}
-	if path == "" {
-		path = "/"
-	}
-	return &flowCookie{aead: aead, secure: secure, path: path}, nil
+	return aead, nil
 }
 
 func (c *flowCookie) set(w http.ResponseWriter, state flowState) error {
-	payload, err := json.Marshal(state)
+	value, err := sealJSON(c.aead, c.aad, state)
 	if err != nil {
-		return fmt.Errorf("auth: encode flow state: %w", err)
+		return err
 	}
-
-	nonce := make([]byte, c.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("auth: cookie nonce: %w", err)
-	}
-	sealed := c.aead.Seal(nonce, nonce, payload, nil)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     flowCookieName,
-		Value:    base64.RawURLEncoding.EncodeToString(sealed),
+		Value:    value,
 		Path:     c.path,
 		MaxAge:   int(flowTTL.Seconds()),
 		HttpOnly: true,
@@ -101,25 +147,12 @@ func (c *flowCookie) get(r *http.Request) (flowState, error) {
 		return zero, fmt.Errorf("auth: read flow cookie: %w", err)
 	}
 
-	sealed, err := base64.RawURLEncoding.DecodeString(cookie.Value)
-	if err != nil {
-		return zero, errors.New("auth: flow cookie is not valid base64")
-	}
-	if len(sealed) < c.aead.NonceSize() {
-		return zero, errors.New("auth: flow cookie is truncated")
-	}
-
-	nonce, ciphertext := sealed[:c.aead.NonceSize()], sealed[c.aead.NonceSize():]
-	payload, err := c.aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		// Either the cookie was tampered with or it was sealed under a
-		// different secret. Both are "start again".
-		return zero, errors.New("auth: flow cookie failed authentication")
-	}
-
 	var state flowState
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return zero, errors.New("auth: flow cookie payload is malformed")
+	if err := openJSON(c.aead, c.aad, cookie.Value, &state); err != nil {
+		// Tampered with, sealed under a different secret, or sealed as a
+		// different kind of cookie -- the AAD makes that last one fail here
+		// rather than one layer further in. All of them are "start again".
+		return zero, fmt.Errorf("auth: flow cookie: %w", err)
 	}
 	// The expiry is inside the sealed payload as well as in Max-Age, because
 	// Max-Age is only advice to a cooperating browser.
@@ -151,4 +184,61 @@ func randomToken() (string, error) {
 		return "", fmt.Errorf("auth: random token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// deriveCookieKey is the HKDF step on its own, so a test can assert on the key
+// material rather than only on the behaviour of the cipher built from it.
+func deriveCookieKey(secret, label string) ([]byte, error) {
+	key, err := hkdf.Key(sha256.New, []byte(secret), nil, label, 32)
+	if err != nil {
+		return nil, fmt.Errorf("auth: derive cookie key: %w", err)
+	}
+	return key, nil
+}
+
+// sealJSON encodes payload as JSON and seals it under aead, binding aad.
+//
+// Both cookies this package sets go through it: the ten-minute flow cookie
+// above and the thirty-day session cookie in session.go. They do NOT share a
+// key -- each derives its own from COOKIE_SECRET under its own label, and each
+// binds its own AAD -- but there is no reason for them to have two copies of
+// the envelope format, and a second copy is exactly where a nonce gets reused
+// or an AAD gets dropped without anything going red.
+func sealJSON(aead cipher.AEAD, aad []byte, payload any) (string, error) {
+	plain, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("auth: encode cookie payload: %w", err)
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("auth: cookie nonce: %w", err)
+	}
+	// The nonce is prepended in the clear: it is not a secret, and openJSON
+	// needs it back before it can authenticate anything.
+	sealed := aead.Seal(nonce, nonce, plain, aad)
+
+	return base64.RawURLEncoding.EncodeToString(sealed), nil
+}
+
+// openJSON authenticates value under aead and aad and decodes it into dst.
+func openJSON(aead cipher.AEAD, aad []byte, value string, dst any) error {
+	sealed, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return errors.New("not valid base64")
+	}
+	if len(sealed) < aead.NonceSize() {
+		return errors.New("truncated")
+	}
+
+	nonce, ciphertext := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
+	plain, err := aead.Open(nil, nonce, ciphertext, aad)
+	if err != nil {
+		return errors.New("failed authentication")
+	}
+
+	if err := json.Unmarshal(plain, dst); err != nil {
+		return errors.New("payload is malformed")
+	}
+	return nil
 }
