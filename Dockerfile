@@ -96,3 +96,36 @@ EXPOSE 8080
 
 USER nonroot:nonroot
 ENTRYPOINT ["/server"]
+
+# ---------------------------------------------------------------------------
+# mockoidcd - the OIDC provider the end-to-end stack signs in against.
+# ---------------------------------------------------------------------------
+#
+# Test-only, and structurally so rather than by convention. This stage sits
+# BELOW `final` and nothing above it refers to it, so `docker build --target
+# final` never builds it and the shipped image cannot contain it. It derives
+# from `builder` only to reuse that stage's module download and build cache.
+#
+# The base is alpine rather than distroless because this image is allowed to
+# have a shell: the compose healthcheck uses busybox wget, and there is no
+# reason to harden an image that exists to be thrown away.
+#
+# e2e/tests/shipped-image.spec.ts reads the module list back out of the binary
+# inside `final` and fails if mockoidc appears in it.
+FROM builder AS mockoidc-builder
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -o /out/mockoidcd \
+        ./e2e/mockoidcd
+
+FROM alpine:3.22 AS mockoidcd
+
+RUN adduser -D -H -u 65532 nonroot
+
+COPY --from=mockoidc-builder /out/mockoidcd /usr/local/bin/mockoidcd
+
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/mockoidcd"]

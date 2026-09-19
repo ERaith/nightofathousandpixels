@@ -63,6 +63,18 @@ worktrees/
 bin/
 tmp/
 
+# `go build ./...` drops one binary per main package into the working
+# directory. There is no wildcard that catches them without also catching
+# directories, so they are listed.
+/server
+/mockoidcd
+
+# e2e suite (ticket G3). node_modules/ is already covered above.
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+e2e/.auth/
+
 # python bytecode
 __pycache__/
 *.pyc
