@@ -1,0 +1,65 @@
+# sqlc generates internal/store/sqlc from the goose migrations plus the hand
+# written queries in internal/store/queries. The generated output is committed,
+# so the production image only needs `go build` -- no sqlc binary in the
+# runtime stage.
+#
+# Regenerate with: go tool sqlc generate
+version: "2"
+sql:
+  - engine: "postgresql"
+    # sqlc reads the goose migrations directly and ignores the `-- +goose Down`
+    # halves, so the schema it types against is by construction the schema the
+    # database actually gets.
+    schema: "internal/store/migrations"
+    queries: "internal/store/queries"
+    # `sqlc vet` uses this connection; `sqlc generate` must not. Declaring a
+    # database makes sqlc's analyzer reach for it during generate as well, which
+    # would mean nobody could regenerate without a running Postgres -- hence the
+    # explicit opt-out below. Generation stays a pure function of the migrations.
+    database:
+      uri: "${SQLC_DATABASE_URL}"
+    analyzer:
+      database: false
+    rules:
+      # PREPAREs every query against live Postgres, which catches the class of
+      # mistake that typechecks in Go and then fails at runtime.
+      #   SQLC_DATABASE_URL=postgres://... go tool sqlc vet
+      - sqlc/db-prepare
+    gen:
+      go:
+        package: "store"
+        out: "internal/store/sqlc"
+        # pgx/v5, not database/sql: the app talks to Postgres through pgxpool
+        # and the integration tests hand the generated Queries a pgx.Tx.
+        sql_package: "pgx/v5"
+        # Querier is what lets a test substitute a transaction (or a fake) for
+        # the pool.
+        emit_interface: true
+        # Nullable columns become *T rather than pgtype.T. A nullable
+        # season_member.submit_limit that silently arrives as 0 would mean
+        # "may not submit" instead of "use the season default", which is the
+        # exact bug this flag prevents.
+        emit_pointers_for_null_types: true
+        # :many queries return an empty slice rather than nil, so templates and
+        # JSON encoders do not have to special-case "no rows".
+        emit_empty_slices: true
+        overrides:
+          # Every id in this schema is a uuid, so this mapping is the one that
+          # decides what handlers, templates and tests actually type.
+          # pgtype.UUID is a {[16]byte, bool} with no String method: it cannot
+          # be compared with ==, cannot be printed in a template, and needs a
+          # conversion at every http.Request boundary. google/uuid.UUID needs
+          # none of that, and pgx v5 encodes and decodes it natively -- measured
+          # against Postgres 16, not assumed, because the usual claim is that it
+          # requires registering a codec on every connection. It does not.
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          # Nullable uuid (only result.winner_movie_id today -- a final-round
+          # tie has no winner) becomes *uuid.UUID, so "no winner" is nil rather
+          # than the all-zeroes uuid.
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+              pointer: true
