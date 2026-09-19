@@ -27,21 +27,50 @@ WHERE google_sub = sqlc.arg(google_sub)::text;
 -- The email path of sign-in: used when no row matched google_sub, which means
 -- either a first sign-in against a whitelisted email or a genuinely new person.
 --
--- google_sub is COALESCEd so that a null subject (should not happen, but the
--- column allows it) cannot unlink an already-linked person, and display_name
--- falls back to the stored value so a provider that returns no name does not
--- blank out one we already had.
+-- The WHERE on the DO UPDATE is an account-takeover guard, not a tidy-up.
+-- Without it, a Google identity that has never signed in here misses the
+-- google_sub lookup, falls through to this query, conflicts on a whitelisted
+-- email and overwrites the stored google_sub -- inheriting that person's
+-- submissions, ballots and is_admin flag. The victim's next sign-in then also
+-- misses the sub lookup and clobbers it back, so two identities ping-pong on
+-- one row. Google ties sub to the account object rather than to the address,
+-- so a recreated account or a recycled address is enough to trigger it.
+-- Reproduced end to end; TestSignInTakeoverIsBlocked replays it.
+--
+-- person_google_sub_key UNIQUE (google_sub) does NOT prevent this. That is the
+-- trap in reading the constraint list and assuming it is covered: the incoming
+-- sub exists nowhere else in the table, so the unique index is satisfied by
+-- MOVING it onto the victim's row. It only stops two ROWS holding the same sub.
+--
+-- So the update applies to a row only when it is unclaimed (google_sub IS NULL:
+-- whitelisted, never signed in) or already owned by this same subject. A
+-- genuine collision updates nothing, RETURNING yields no row, and :one surfaces
+-- pgx.ErrNoRows. THE CALLER MUST NOT READ THAT AS "person not found": it means
+-- "this email belongs to a different Google identity", which is refuse-sign-in
+-- and escalate to an admin.
+--
+-- google_sub is a non-null parameter even though the column is nullable. The
+-- column must allow null for whitelisted rows that have never signed in, but a
+-- sign-in always carries a subject: internal/auth rejects an ID token whose sub
+-- is absent or empty (ErrNoSubject) before it can reach here. That matters,
+-- because with a nullable parameter `person.google_sub = EXCLUDED.google_sub`
+-- evaluates to NULL rather than true for an already-linked person, the update
+-- silently skips, and a legitimate sign-in is misreported as a collision. If
+-- the ErrNoSubject gate is ever removed, this parameter has to go back to
+-- sqlc.narg and the guard needs a third arm, `OR EXCLUDED.google_sub IS NULL`.
 INSERT INTO person (email, email_normalized, google_sub, display_name)
 VALUES (
     sqlc.arg(email),
     sqlc.arg(email_normalized),
-    sqlc.narg(google_sub),
+    sqlc.arg(google_sub)::text,
     sqlc.arg(display_name)
 )
 ON CONFLICT (email_normalized) DO UPDATE
 SET email        = EXCLUDED.email,
-    google_sub   = COALESCE(EXCLUDED.google_sub, person.google_sub),
+    google_sub   = EXCLUDED.google_sub,
     display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), person.display_name)
+WHERE person.google_sub IS NULL
+   OR person.google_sub = EXCLUDED.google_sub
 RETURNING *;
 
 -- name: UpdatePersonIdentity :one

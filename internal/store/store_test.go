@@ -90,7 +90,7 @@ func signIn(t *testing.T, q *store.Queries, email, sub, name string) store.Perso
 	p, err := q.UpsertPersonOnSignIn(context.Background(), store.UpsertPersonOnSignInParams{
 		Email:           email,
 		EmailNormalized: email,
-		GoogleSub:       ptr(sub),
+		GoogleSub:       sub,
 		DisplayName:     name,
 	})
 	if err != nil {
@@ -543,4 +543,144 @@ func TestUUIDMapping(t *testing.T) {
 		t.Errorf("decided winner = %v, want %v", winner, movie.ID)
 	}
 	t.Logf("decided season winner_movie_id decodes as %v", winner)
+}
+
+// oldUpsertSQL is UpsertPersonOnSignIn exactly as it shipped before the
+// takeover guard: a DO UPDATE with no WHERE. It is inlined here, rather than
+// described, so the test can demonstrate the vulnerability on a live server
+// instead of asserting that a fix fixes something nobody ever saw break.
+const oldUpsertSQL = `
+INSERT INTO person (email, email_normalized, google_sub, display_name)
+VALUES ($1, $1, $2, $3)
+ON CONFLICT (email_normalized) DO UPDATE
+SET email        = EXCLUDED.email,
+    google_sub   = COALESCE(EXCLUDED.google_sub, person.google_sub),
+    display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), person.display_name)
+RETURNING id, google_sub, display_name`
+
+// TestSignInTakeoverIsBlocked is the regression test for the account-takeover
+// defect in UpsertPersonOnSignIn.
+//
+// The attack needs nothing exotic. Google ties sub to the account object, not
+// to the address, so a recreated Google account or a recycled address produces
+// a new sub for an email another person already holds. Sign-in tries the sub
+// lookup first, misses, and falls through to the upsert.
+//
+// The test proves both halves: that the old query really was exploitable, and
+// that the guard stops it while leaving every legitimate path working.
+func TestSignInTakeoverIsBlocked(t *testing.T) {
+	pool := connect(t)
+	tx := begin(t, pool)
+	q := store.New(tx)
+	ctx := context.Background()
+
+	const victimEmail = "alice@example.com"
+
+	// Alice signs in, runs a season and submits a film. This is what a
+	// takeover actually gets you.
+	alice := signIn(t, q, victimEmail, "sub-alice", "Alice")
+	seasonID := seedSeason(t, tx, 2031, 2)
+	if _, err := q.UpsertSeasonMember(ctx, store.UpsertSeasonMemberParams{
+		SeasonID: seasonID, PersonID: alice.ID, IsAdmin: true,
+	}); err != nil {
+		t.Fatalf("make alice admin: %v", err)
+	}
+	if _, err := q.CreateMovie(ctx, store.CreateMovieParams{
+		SeasonID: seasonID, SubmittedBy: alice.ID, Title: "Alice's Pick",
+	}); err != nil {
+		t.Fatalf("alice submits: %v", err)
+	}
+	t.Logf("victim: id=%v sub=%q admin=true submissions=1", alice.ID, *alice.GoogleSub)
+
+	// --- Half one: the old query was genuinely exploitable. ---
+	//
+	// Run it inside a savepoint so the damage is rolled back before the real
+	// query is exercised.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+
+	var stolenID uuid.UUID
+	var stolenSub, stolenName string
+	if err := sp.QueryRow(ctx, oldUpsertSQL, victimEmail, "sub-mallory", "Mallory").
+		Scan(&stolenID, &stolenSub, &stolenName); err != nil {
+		t.Fatalf("old upsert: %v", err)
+	}
+
+	var personCount, inheritedSubmissions int
+	var inheritedAdmin bool
+	if err := sp.QueryRow(ctx, `SELECT count(*) FROM person`).Scan(&personCount); err != nil {
+		t.Fatalf("count person: %v", err)
+	}
+	if err := sp.QueryRow(ctx,
+		`SELECT sm.is_admin, (SELECT count(*) FROM movie m WHERE m.submitted_by = sm.person_id)
+		 FROM season_member sm WHERE sm.person_id = $1`, stolenID).
+		Scan(&inheritedAdmin, &inheritedSubmissions); err != nil {
+		t.Fatalf("inherited privileges: %v", err)
+	}
+
+	if stolenID != alice.ID {
+		t.Fatal("setup wrong: the old query did not collide on Alice's row")
+	}
+	if stolenSub != "sub-mallory" || !inheritedAdmin || inheritedSubmissions != 1 || personCount != 1 {
+		t.Fatalf("expected the OLD query to be exploitable, but it was not: "+
+			"sub=%q admin=%v submissions=%d rows=%d",
+			stolenSub, inheritedAdmin, inheritedSubmissions, personCount)
+	}
+	t.Logf("UNFIXED query: row count still %d, sub is now %q (%q), inherited admin=%v submissions=%d"+
+		" -- takeover reproduced",
+		personCount, stolenSub, stolenName, inheritedAdmin, inheritedSubmissions)
+
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback savepoint: %v", err)
+	}
+
+	// --- Half two: the shipped query refuses the same attack. ---
+	_, err = q.UpsertPersonOnSignIn(ctx, store.UpsertPersonOnSignInParams{
+		Email:           victimEmail,
+		EmailNormalized: victimEmail,
+		GoogleSub:       "sub-mallory",
+		DisplayName:     "Mallory",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("takeover was not refused: err = %v, want pgx.ErrNoRows", err)
+	}
+	t.Logf("FIXED query:   %v -- read as identity collision, NOT as person-not-found", err)
+
+	// Alice's row must be untouched, privileges included.
+	after, err := q.GetPersonByGoogleSub(ctx, "sub-alice")
+	if err != nil {
+		t.Fatalf("alice lost her row: %v", err)
+	}
+	if after.ID != alice.ID || after.DisplayName != "Alice" {
+		t.Errorf("alice's row was modified: %+v", after)
+	}
+	if _, err := q.GetPersonByGoogleSub(ctx, "sub-mallory"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("mallory's sub reached the table: %v", err)
+	}
+	t.Logf("victim intact: id=%v sub=%q display_name=%q", after.ID, *after.GoogleSub, after.DisplayName)
+
+	// --- The legitimate paths must still work. ---
+
+	// A whitelisted row that has never signed in is unclaimed, so the first
+	// Google identity to present that address takes it.
+	var whitelistedID uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO person (email, email_normalized, display_name)
+		 VALUES ($1, $1, '') RETURNING id`, "bob@example.com").Scan(&whitelistedID); err != nil {
+		t.Fatalf("whitelist bob: %v", err)
+	}
+	claimed := signIn(t, q, "bob@example.com", "sub-bob", "Bob")
+	if claimed.ID != whitelistedID {
+		t.Errorf("first sign-in did not claim the whitelisted row: %v != %v", claimed.ID, whitelistedID)
+	}
+	t.Logf("unclaimed row: claimed by %q on first sign-in", *claimed.GoogleSub)
+
+	// The same person signing in again is not a collision.
+	repeat := signIn(t, q, victimEmail, "sub-alice", "Alice Renamed")
+	if repeat.ID != alice.ID || repeat.DisplayName != "Alice Renamed" {
+		t.Errorf("repeat sign-in broke: %+v", repeat)
+	}
+	t.Logf("same subject:  repeat sign-in still updates (display_name=%q)", repeat.DisplayName)
 }
