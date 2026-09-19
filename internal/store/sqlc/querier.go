@@ -7,7 +7,7 @@ package store
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 type Querier interface {
@@ -41,10 +41,10 @@ type Querier interface {
 	// the slate, does not count against its submitter's cap, and does not block a
 	// resubmission of the same TMDB id -- but the ballot rows that ranked it
 	// survive.
-	GetMovie(ctx context.Context, id pgtype.UUID) (Movie, error)
+	GetMovie(ctx context.Context, id uuid.UUID) (Movie, error)
 	// person is the identity spine. These queries cover sign-in only; everything
 	// that decides whether a person may do something lives in season_member.
-	GetPerson(ctx context.Context, id pgtype.UUID) (Person, error)
+	GetPerson(ctx context.Context, id uuid.UUID) (Person, error)
 	// The whitelist lookup. Admins add people by email before those people have
 	// ever signed in, so this is how a brand new Google identity finds the row
 	// that was already waiting for it.
@@ -59,7 +59,7 @@ type Querier interface {
 	GetPersonByGoogleSub(ctx context.Context, googleSub string) (Person, error)
 	// One row per year. Past seasons stay browsable forever, so the list queries
 	// here are what the archive is built from.
-	GetSeason(ctx context.Context, id pgtype.UUID) (Season, error)
+	GetSeason(ctx context.Context, id uuid.UUID) (Season, error)
 	GetSeasonByYear(ctx context.Context, year int32) (Season, error)
 	// The per-year whitelist. Membership is what gates sign-in, admin is per
 	// season, and submit_limit is a per-person override of the season default.
@@ -76,14 +76,14 @@ type Querier interface {
 	// The admin whitelist page. Joined to person because a list of uuids is not a
 	// whitelist anyone can read; email is the column an admin actually recognises
 	// and is therefore also the sort key.
-	ListSeasonMembers(ctx context.Context, seasonID pgtype.UUID) ([]ListSeasonMembersRow, error)
+	ListSeasonMembers(ctx context.Context, seasonID uuid.UUID) ([]ListSeasonMembersRow, error)
 	// Every season including drafts. Admin only -- the public archive uses
 	// ListPublishedSeasons.
 	ListSeasons(ctx context.Context) ([]Season, error)
 	// The slate: what the submissions page shows and what the ballot is built
 	// from. Ordered by submission time with an id tiebreak so the list is stable
 	// across page loads.
-	ListVisibleMoviesForSeason(ctx context.Context, seasonID pgtype.UUID) ([]Movie, error)
+	ListVisibleMoviesForSeason(ctx context.Context, seasonID uuid.UUID) ([]Movie, error)
 	// The soft delete, and its undo. There is deliberately no DELETE FROM movie:
 	// ballot_entry's foreign key would block it anyway, which is the point.
 	SetMovieHidden(ctx context.Context, arg SetMovieHiddenParams) (Movie, error)

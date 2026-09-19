@@ -8,7 +8,7 @@ package store
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const countPersonMoviesInSeason = `-- name: CountPersonMoviesInSeason :one
@@ -19,8 +19,8 @@ WHERE season_id = $1
 `
 
 type CountPersonMoviesInSeasonParams struct {
-	SeasonID    pgtype.UUID
-	SubmittedBy pgtype.UUID
+	SeasonID    uuid.UUID
+	SubmittedBy uuid.UUID
 }
 
 // Backs the per-person submission cap. Hidden rows must not count: otherwise
@@ -55,8 +55,8 @@ RETURNING id, season_id, submitted_by, title, year, tmdb_id, trailer_url, descri
 `
 
 type CreateMovieParams struct {
-	SeasonID    pgtype.UUID
-	SubmittedBy pgtype.UUID
+	SeasonID    uuid.UUID
+	SubmittedBy uuid.UUID
 	Title       string
 	Year        *int32
 	TmdbID      *int32
@@ -100,7 +100,7 @@ WHERE id = $1
 // the slate, does not count against its submitter's cap, and does not block a
 // resubmission of the same TMDB id -- but the ballot rows that ranked it
 // survive.
-func (q *Queries) GetMovie(ctx context.Context, id pgtype.UUID) (Movie, error) {
+func (q *Queries) GetMovie(ctx context.Context, id uuid.UUID) (Movie, error) {
 	row := q.db.QueryRow(ctx, getMovie, id)
 	var i Movie
 	err := row.Scan(
@@ -127,8 +127,8 @@ ORDER BY created_at, id
 `
 
 type ListPersonMoviesForSeasonParams struct {
-	SeasonID    pgtype.UUID
-	SubmittedBy pgtype.UUID
+	SeasonID    uuid.UUID
+	SubmittedBy uuid.UUID
 }
 
 // A person's own live submissions. Hidden rows are excluded so that this list
@@ -175,7 +175,7 @@ ORDER BY created_at, id
 // The slate: what the submissions page shows and what the ballot is built
 // from. Ordered by submission time with an id tiebreak so the list is stable
 // across page loads.
-func (q *Queries) ListVisibleMoviesForSeason(ctx context.Context, seasonID pgtype.UUID) ([]Movie, error) {
+func (q *Queries) ListVisibleMoviesForSeason(ctx context.Context, seasonID uuid.UUID) ([]Movie, error) {
 	rows, err := q.db.Query(ctx, listVisibleMoviesForSeason, seasonID)
 	if err != nil {
 		return nil, err
@@ -215,7 +215,7 @@ RETURNING id, season_id, submitted_by, title, year, tmdb_id, trailer_url, descri
 
 type SetMovieHiddenParams struct {
 	Hidden bool
-	ID     pgtype.UUID
+	ID     uuid.UUID
 }
 
 // The soft delete, and its undo. There is deliberately no DELETE FROM movie:
@@ -255,7 +255,7 @@ type UpdateMovieParams struct {
 	TmdbID      *int32
 	TrailerUrl  *string
 	Description string
-	ID          pgtype.UUID
+	ID          uuid.UUID
 }
 
 // Scoped by id alone; who may edit a submission is an authorisation question

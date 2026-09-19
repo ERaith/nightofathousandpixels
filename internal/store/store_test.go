@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,15 +38,6 @@ func show[T any](v *T) string {
 		return "NULL"
 	}
 	return fmt.Sprintf("%v", *v)
-}
-
-func newUUID(t *testing.T) pgtype.UUID {
-	t.Helper()
-	var u pgtype.UUID
-	if err := u.Scan("00000000-0000-0000-0000-000000000000"); err != nil {
-		t.Fatalf("scan uuid: %v", err)
-	}
-	return u
 }
 
 // connect opens a pool against TEST_DATABASE_URL, skipping the test when it is
@@ -80,9 +72,9 @@ func begin(t *testing.T, pool *pgxpool.Pool) pgx.Tx {
 	return tx
 }
 
-func seedSeason(t *testing.T, tx pgx.Tx, year int32, defaultLimit int32) pgtype.UUID {
+func seedSeason(t *testing.T, tx pgx.Tx, year int32, defaultLimit int32) uuid.UUID {
 	t.Helper()
-	var id pgtype.UUID
+	var id uuid.UUID
 	err := tx.QueryRow(context.Background(),
 		`INSERT INTO season (year, name, default_submit_limit, state)
 		 VALUES ($1, $2, $3, 'submitting') RETURNING id`,
@@ -192,7 +184,7 @@ func TestEffectiveSubmitLimit(t *testing.T) {
 	// A non-member is not "limit 0" -- they have no membership at all, and the
 	// query says so by returning no rows.
 	_, err := q.GetEffectiveSubmitLimit(ctx, store.GetEffectiveSubmitLimitParams{
-		SeasonID: seasonID, PersonID: newUUID(t),
+		SeasonID: seasonID, PersonID: uuid.New(),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("non-member: got err %v, want pgx.ErrNoRows", err)
@@ -420,7 +412,7 @@ func TestSeasonListingAndMembers(t *testing.T) {
 	ctx := context.Background()
 
 	published := seedSeason(t, tx, 2029, 2)
-	var draft pgtype.UUID
+	var draft uuid.UUID
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO season (year, name, state) VALUES (2030, 'Next Year', 'draft') RETURNING id`,
 	).Scan(&draft); err != nil {
@@ -483,4 +475,72 @@ func TestSeasonListingAndMembers(t *testing.T) {
 		t.Errorf("deleted member still present: %v", err)
 	}
 	t.Logf("after DeleteSeasonMember, GetSeasonMember returns pgx.ErrNoRows")
+}
+
+// TestUUIDMapping pins down the type every id in this schema is expressed as.
+// The mapping is a config choice, so it is worth a test that fails loudly if
+// someone changes it: uuid.UUID is comparable with ==, prints as a uuid, and
+// needs no conversion at the HTTP boundary, none of which is true of
+// pgtype.UUID.
+func TestUUIDMapping(t *testing.T) {
+	pool := connect(t)
+	tx := begin(t, pool)
+	q := store.New(tx)
+	ctx := context.Background()
+
+	seasonID := seedSeason(t, tx, 2032, 2)
+	person := signIn(t, q, "uuid@example.com", "sub-uuid", "Uuid")
+
+	// A uuid that arrived as text on a request, as a handler will see it.
+	parsed, err := uuid.Parse(seasonID.String())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed != seasonID {
+		t.Error("uuid does not survive String/Parse round trip")
+	}
+	t.Logf("season id round trips through text: %s (comparable with ==)", seasonID)
+
+	movie, err := q.CreateMovie(ctx, store.CreateMovieParams{
+		SeasonID: seasonID, SubmittedBy: person.ID, Title: "Id Test",
+	})
+	if err != nil {
+		t.Fatalf("create movie: %v", err)
+	}
+	if movie.SeasonID != seasonID || movie.SubmittedBy != person.ID {
+		t.Error("ids did not round trip through the database")
+	}
+	t.Logf("movie.season_id == season id: %v, movie.submitted_by == person id: %v",
+		movie.SeasonID == seasonID, movie.SubmittedBy == person.ID)
+
+	// result.winner_movie_id is the one nullable uuid in the schema: a tie in
+	// the final round has no winner. It must decode as nil, not as the
+	// all-zeroes uuid, or "nobody won" and "the nil uuid won" become the same
+	// value. No query returns it yet, so this checks the mapping directly.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO result (season_id, winner_movie_id) VALUES ($1, NULL)`, seasonID); err != nil {
+		t.Fatalf("insert tied result: %v", err)
+	}
+	var winner *uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`SELECT winner_movie_id FROM result WHERE season_id = $1`, seasonID).Scan(&winner); err != nil {
+		t.Fatalf("read tied result: %v", err)
+	}
+	t.Logf("tied season winner_movie_id decodes as %v (nil, not the zero uuid)", winner)
+	if winner != nil {
+		t.Errorf("NULL winner decoded as %v", *winner)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE result SET winner_movie_id = $2 WHERE season_id = $1`, seasonID, movie.ID); err != nil {
+		t.Fatalf("set winner: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`SELECT winner_movie_id FROM result WHERE season_id = $1`, seasonID).Scan(&winner); err != nil {
+		t.Fatalf("read decided result: %v", err)
+	}
+	if winner == nil || *winner != movie.ID {
+		t.Errorf("decided winner = %v, want %v", winner, movie.ID)
+	}
+	t.Logf("decided season winner_movie_id decodes as %v", winner)
 }

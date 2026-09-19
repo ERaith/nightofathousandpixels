@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -49,7 +50,7 @@ WHERE id = $1
 
 // One row per year. Past seasons stay browsable forever, so the list queries
 // here are what the archive is built from.
-func (q *Queries) GetSeason(ctx context.Context, id pgtype.UUID) (Season, error) {
+func (q *Queries) GetSeason(ctx context.Context, id uuid.UUID) (Season, error) {
 	row := q.db.QueryRow(ctx, getSeason, id)
 	var i Season
 	err := row.Scan(
@@ -184,7 +185,7 @@ RETURNING id, year, name, theme_pack, submit_opens_at, vote_opens_at, vote_close
 
 type UpdateSeasonStateParams struct {
 	State string
-	ID    pgtype.UUID
+	ID    uuid.UUID
 }
 
 // state and locked_at have to move together: the season_locked_has_timestamp
@@ -224,7 +225,7 @@ type UpdateSeasonWindowsParams struct {
 	SubmitOpensAt pgtype.Timestamptz
 	VoteOpensAt   pgtype.Timestamptz
 	VoteClosesAt  pgtype.Timestamptz
-	ID            pgtype.UUID
+	ID            uuid.UUID
 }
 
 // All three are nullable: a season can be created before its dates are

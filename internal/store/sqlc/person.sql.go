@@ -8,7 +8,7 @@ package store
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const getPerson = `-- name: GetPerson :one
@@ -19,7 +19,7 @@ WHERE id = $1
 
 // person is the identity spine. These queries cover sign-in only; everything
 // that decides whether a person may do something lives in season_member.
-func (q *Queries) GetPerson(ctx context.Context, id pgtype.UUID) (Person, error) {
+func (q *Queries) GetPerson(ctx context.Context, id uuid.UUID) (Person, error) {
 	row := q.db.QueryRow(ctx, getPerson, id)
 	var i Person
 	err := row.Scan(
@@ -94,7 +94,7 @@ type UpdatePersonIdentityParams struct {
 	Email           string
 	EmailNormalized string
 	DisplayName     string
-	ID              pgtype.UUID
+	ID              uuid.UUID
 }
 
 // The google_sub path of sign-in: the person is already known, but Google may

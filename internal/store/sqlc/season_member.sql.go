@@ -8,7 +8,7 @@ package store
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const deleteSeasonMember = `-- name: DeleteSeasonMember :exec
@@ -18,8 +18,8 @@ WHERE season_id = $1
 `
 
 type DeleteSeasonMemberParams struct {
-	SeasonID pgtype.UUID
-	PersonID pgtype.UUID
+	SeasonID uuid.UUID
+	PersonID uuid.UUID
 }
 
 // Removing someone from a season's whitelist. This cascades to their ballot
@@ -42,8 +42,8 @@ WHERE season_member.season_id = $1
 `
 
 type GetEffectiveSubmitLimitParams struct {
-	SeasonID pgtype.UUID
-	PersonID pgtype.UUID
+	SeasonID uuid.UUID
+	PersonID uuid.UUID
 }
 
 // The whole reason the override lives on the membership row: NULL means "use
@@ -70,8 +70,8 @@ WHERE season_id = $1
 `
 
 type GetSeasonMemberParams struct {
-	SeasonID pgtype.UUID
-	PersonID pgtype.UUID
+	SeasonID uuid.UUID
+	PersonID uuid.UUID
 }
 
 // The per-year whitelist. Membership is what gates sign-in, admin is per
@@ -113,7 +113,7 @@ type ListSeasonMembersRow struct {
 // The admin whitelist page. Joined to person because a list of uuids is not a
 // whitelist anyone can read; email is the column an admin actually recognises
 // and is therefore also the sort key.
-func (q *Queries) ListSeasonMembers(ctx context.Context, seasonID pgtype.UUID) ([]ListSeasonMembersRow, error) {
+func (q *Queries) ListSeasonMembers(ctx context.Context, seasonID uuid.UUID) ([]ListSeasonMembersRow, error) {
 	rows, err := q.db.Query(ctx, listSeasonMembers, seasonID)
 	if err != nil {
 		return nil, err
@@ -157,8 +157,8 @@ RETURNING season_id, person_id, is_admin, submit_limit, created_at
 `
 
 type UpsertSeasonMemberParams struct {
-	SeasonID    pgtype.UUID
-	PersonID    pgtype.UUID
+	SeasonID    uuid.UUID
+	PersonID    uuid.UUID
 	IsAdmin     bool
 	SubmitLimit *int32
 }

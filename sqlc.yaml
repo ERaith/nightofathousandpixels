@@ -43,3 +43,23 @@ sql:
         # :many queries return an empty slice rather than nil, so templates and
         # JSON encoders do not have to special-case "no rows".
         emit_empty_slices: true
+        overrides:
+          # Every id in this schema is a uuid, so this mapping is the one that
+          # decides what handlers, templates and tests actually type.
+          # pgtype.UUID is a {[16]byte, bool} with no String method: it cannot
+          # be compared with ==, cannot be printed in a template, and needs a
+          # conversion at every http.Request boundary. google/uuid.UUID needs
+          # none of that, and pgx v5 encodes and decodes it natively -- measured
+          # against Postgres 16, not assumed, because the usual claim is that it
+          # requires registering a codec on every connection. It does not.
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          # Nullable uuid (only result.winner_movie_id today -- a final-round
+          # tie has no winner) becomes *uuid.UUID, so "no winner" is nil rather
+          # than the all-zeroes uuid.
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+              pointer: true

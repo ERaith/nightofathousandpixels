@@ -5,6 +5,7 @@
 package store
 
 import (
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -18,17 +19,17 @@ type AuditLog struct {
 }
 
 type BallotEntry struct {
-	SeasonID  pgtype.UUID
-	PersonID  pgtype.UUID
-	MovieID   pgtype.UUID
+	SeasonID  uuid.UUID
+	PersonID  uuid.UUID
+	MovieID   uuid.UUID
 	Rank      int32
 	CreatedAt pgtype.Timestamptz
 }
 
 type Movie struct {
-	ID          pgtype.UUID
-	SeasonID    pgtype.UUID
-	SubmittedBy pgtype.UUID
+	ID          uuid.UUID
+	SeasonID    uuid.UUID
+	SubmittedBy uuid.UUID
 	Title       string
 	Year        *int32
 	TmdbID      *int32
@@ -39,7 +40,7 @@ type Movie struct {
 }
 
 type Person struct {
-	ID              pgtype.UUID
+	ID              uuid.UUID
 	Email           string
 	EmailNormalized string
 	GoogleSub       *string
@@ -48,14 +49,14 @@ type Person struct {
 }
 
 type Result struct {
-	SeasonID      pgtype.UUID
-	WinnerMovieID pgtype.UUID
+	SeasonID      uuid.UUID
+	WinnerMovieID *uuid.UUID
 	Rounds        []byte
 	TalliedAt     pgtype.Timestamptz
 }
 
 type Season struct {
-	ID                 pgtype.UUID
+	ID                 uuid.UUID
 	Year               int32
 	Name               string
 	ThemePack          string
@@ -69,8 +70,8 @@ type Season struct {
 }
 
 type SeasonMember struct {
-	SeasonID    pgtype.UUID
-	PersonID    pgtype.UUID
+	SeasonID    uuid.UUID
+	PersonID    uuid.UUID
 	IsAdmin     bool
 	SubmitLimit *int32
 	CreatedAt   pgtype.Timestamptz
