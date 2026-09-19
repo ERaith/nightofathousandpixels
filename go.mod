@@ -2,7 +2,10 @@ module github.com/ERaith/nightofathousandpixels
 
 go 1.26.0
 
-require github.com/go-chi/chi/v5 v5.3.2
+require (
+	github.com/a-h/templ v0.3.1020
+	github.com/go-chi/chi/v5 v5.3.2
+)
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.4.0 // indirect
@@ -32,7 +35,6 @@ require (
 	github.com/MirrexOne/unqueryvet v1.5.4 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.1 // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
-	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/air-verse/air v1.63.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/alecthomas/go-check-sumtype v0.3.1 // indirect

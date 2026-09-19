@@ -1,0 +1,101 @@
+package templates
+
+// Layout is the html/head/body skeleton every page on the site sits in. A page
+// template calls it with its own content as children:
+//
+//	templ SomePage(p Page) {
+//		@Layout(p) {
+//			<h1>...</h1>
+//		}
+//	}
+//
+// Top-level children are spaced by base.css's .stack-lg rhythm, so a page can
+// emit several sections and get consistent vertical spacing. A page that wants
+// to control its own spacing emits a single wrapper element instead.
+//
+// ---------------------------------------------------------------------------
+// THE STYLESHEET ORDER IS THE CONTRACT. DO NOT SWAP THESE TWO LINES.
+// ---------------------------------------------------------------------------
+//
+//	<link rel="stylesheet" href="{theme pack}">   <- pack FIRST
+//	<link rel="stylesheet" href="/static/css/base.css">  <- base LAST
+//
+// A theme pack owns colours, fonts, copy and assets, and nothing else. It says
+// all of that in custom properties on :root. base.css owns layout and
+// accessibility, and it has to be able to overrule a pack that reaches past
+// its half of the deal — 9px body text, a dead focus ring, a 20px tap target.
+//
+// Two separate mechanisms do that, and this ordering is one of them:
+//
+//   - Load order settles the ordinary declarations. Both files are unlayered,
+//     so at equal specificity the later one wins. base.css loading second is
+//     what keeps a pack's `.card { display: block }` from rearranging a page.
+//   - @layer nap-enforce inside base.css settles the accessibility floors. For
+//     !important declarations the cascade reverses, so a layered !important
+//     beats an unlayered one at any specificity, whichever file loaded first.
+//     Each floor is also written as max(<literal>, var(--token)), so a pack
+//     that poisons a token wins nothing.
+//
+// Getting this order wrong therefore does not silently turn off the
+// accessibility floors — they hold either way, on purpose. What it does lose
+// is every non-important rule in base.css: layout, the readable measure, the
+// mobile-first grid, the notice and card components. A pack could then
+// redecorate the page into something that does not work at 320px, and nothing
+// would report it. Keep base last.
+//
+// base.css is referenced through the BaseCSS constant rather than a field, so
+// no caller can move it. Only the pack href is a parameter, which is what
+// ticket F2 fills in.
+templ Layout(p Page) {
+	{{ theme := p.Theme.Resolve() }}
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ p.DocumentTitle() }</title>
+			<meta name="description" content={ p.MetaDescription() }/>
+			// These links get pasted into a group chat, so the preview card is
+			// part of the product. og:image needs an absolute URL, which is
+			// why it is skipped when ORIGIN is not configured.
+			<meta property="og:type" content="website"/>
+			<meta property="og:site_name" content={ theme.SiteTitle }/>
+			<meta property="og:title" content={ p.DocumentTitle() }/>
+			<meta property="og:description" content={ p.MetaDescription() }/>
+			<meta property="og:locale" content="en_US"/>
+			if pageURL := p.AbsoluteURL(p.Path); pageURL != "" {
+				<meta property="og:url" content={ pageURL }/>
+				<link rel="canonical" href={ pageURL }/>
+			}
+			if image := p.AbsoluteURL(theme.OGImage); image != "" {
+				<meta property="og:image" content={ image }/>
+				<meta property="og:image:alt" content={ theme.OGImageAlt }/>
+				<meta name="twitter:card" content="summary_large_image"/>
+			} else {
+				// Ticket F4 gives each pack a share image; until one exists,
+				// a plain summary card beats a broken thumbnail.
+				<meta name="twitter:card" content="summary"/>
+			}
+			// Theme pack first, base.css second. See the comment above this
+			// template before changing either line.
+			<link rel="stylesheet" href={ theme.PackCSS }/>
+			<link rel="stylesheet" href={ BaseCSS }/>
+			<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%23101219'/%3E%3Crect%20x='3.5'%20y='3.5'%20width='4'%20height='4'%20fill='%237cc4ff'/%3E%3Crect%20x='8.5'%20y='3.5'%20width='4'%20height='4'%20fill='%23ffc46b'/%3E%3Crect%20x='3.5'%20y='8.5'%20width='4'%20height='4'%20fill='%23ffc46b'/%3E%3Crect%20x='8.5'%20y='8.5'%20width='4'%20height='4'%20fill='%237cc4ff'/%3E%3C/svg%3E"/>
+		</head>
+		<body>
+			// First thing in the tab order. base.css slides it into view the
+			// moment it takes focus.
+			<a class="skip-link" href="#main">Skip to content</a>
+			@SiteHeader(p)
+			// tabindex="-1" is what makes the skip link actually move focus
+			// rather than only scrolling the page.
+			<main id="main" class="site-main" tabindex="-1">
+				<div class="container stack-lg">
+					@FlashRegion(p.Flashes)
+					{ children... }
+				</div>
+			</main>
+			@SiteFooter(p)
+		</body>
+	</html>
+}

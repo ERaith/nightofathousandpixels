@@ -1,0 +1,33 @@
+package templates
+
+// ErrorPage is a full error page inside the normal site shell, so a 404 still
+// has the header, the wordmark and a way back rather than Go's bare
+// "404 page not found" on a white background.
+//
+// It takes its copy as data so the two exported wrappers below are the only
+// places any of it is written down.
+templ ErrorPage(p Page, e ErrorContent) {
+	@Layout(p) {
+		<div class="measure">
+			<div class="page-head">
+				<p class="badge">Error { e.StatusText() }</p>
+				<h1>{ e.Heading }</h1>
+			</div>
+			<p class="lead">{ e.Body }</p>
+			<div class="cluster">
+				<a class="btn btn--primary" href="/">Back to the front page</a>
+			</div>
+		</div>
+	}
+}
+
+// NotFoundPage is the 404.
+templ NotFoundPage(p Page) {
+	@ErrorPage(p, NotFoundContent)
+}
+
+// ServerErrorPage is the 500. It never shows the underlying error: a visitor
+// cannot act on it, and it belongs in the logs.
+templ ServerErrorPage(p Page) {
+	@ErrorPage(p, ServerErrorContent)
+}

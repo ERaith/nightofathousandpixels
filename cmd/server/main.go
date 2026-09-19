@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/ERaith/nightofathousandpixels/internal/config"
+	"github.com/ERaith/nightofathousandpixels/internal/web"
 )
 
 const (
@@ -41,7 +42,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           newRouter(),
+		Handler:           newRouter(cfg),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -77,13 +78,17 @@ func run() error {
 	return <-serveErr
 }
 
-func newRouter() http.Handler {
+func newRouter(cfg *config.Config) http.Handler {
 	r := chi.NewRouter()
 	// Structured request logging replaces chi's stdlib logger in A5.
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", handleHealthz)
+
+	// The HTML pages and /static/. Origin is only used to build absolute URLs
+	// for link previews; nothing here reads the database.
+	web.New(web.Options{Origin: cfg.Origin}).Routes(r)
 
 	return r
 }
