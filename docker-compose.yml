@@ -1,0 +1,80 @@
+# Night of a Thousand Pixels - local and deployed stack.
+#
+# Everything host-visible is derived from AGENT_SLOT by the Makefile and
+# reaches this file as an exported environment variable, so several agents can
+# run their own stack on one machine at the same time. The compose project
+# name is what makes that real: containers, the network and the pgdata volume
+# are all namespaced under it, so `nap-a1` and `nap-a2` share nothing.
+#
+# Defaults below are slot 0's, for the case where compose is run directly
+# rather than through make.
+name: ${COMPOSE_PROJECT_NAME:-nap-a0}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nap}
+      POSTGRES_DB: ${POSTGRES_DB:-nap}
+    ports:
+      # Bound to the loopback interface: the database is for this machine, and
+      # on the deploy host it must not be reachable from the network.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The gate the migrator waits on. `pg_isready` alone returns true while
+      # postgres is still in its init-scripts phase, so the query is what makes
+      # this mean "ready for connections".
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nap} -d ${POSTGRES_DB:-nap} && psql -U ${POSTGRES_USER:-nap} -d ${POSTGRES_DB:-nap} -c 'select 1' > /dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  # Runs to completion, then exits. `app` will not start unless this exits 0,
+  # so a failed migration stops the deploy instead of producing a server in
+  # front of a half-built schema. goose is PID 1 here - there is no shell and
+  # no entrypoint script that could catch its failure and carry on.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-nap}:${POSTGRES_PASSWORD:-nap}@postgres:5432/${POSTGRES_DB:-nap}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: final
+    environment:
+      # Inside the network the database is reached by service name on 5432;
+      # the published POSTGRES_PORT above is only for tools on the host.
+      DATABASE_URL: postgres://${POSTGRES_USER:-nap}:${POSTGRES_PASSWORD:-nap}@postgres:5432/${POSTGRES_DB:-nap}?sslmode=disable
+      PORT: 8080
+      ORIGIN: ${COMPOSE_ORIGIN:-http://localhost:8080}
+      # No defaults: a stack that boots with an empty signing key or a
+      # guessed issuer is worse than one that refuses to start.
+      OAUTH_ISSUER_URL: ${OAUTH_ISSUER_URL:?OAUTH_ISSUER_URL must be set - copy .env.example to .env}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:?OAUTH_CLIENT_ID must be set - copy .env.example to .env}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:?OAUTH_CLIENT_SECRET must be set - copy .env.example to .env}
+      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set, at least 32 characters - copy .env.example to .env}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  # Namespaced by the project name, so this is <project>_pgdata: slot 1 and
+  # slot 2 get different volumes and cannot see each other's data.
+  pgdata:

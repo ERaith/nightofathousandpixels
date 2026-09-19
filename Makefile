@@ -17,6 +17,13 @@
 # and never reads this file.
 -include .env
 
+# Remember what .env supplied for the three values the slot owns, so that
+# setting one there is reported rather than silently ignored (see the warning
+# further down). Everything else in .env is the developer's to set.
+ENV_SUPPLIED_PORT         := $(PORT)
+ENV_SUPPLIED_DATABASE_URL := $(DATABASE_URL)
+ENV_SUPPLIED_ORIGIN       := $(ORIGIN)
+
 # Export every variable defined here to recipes, so go, goose, sqlc and
 # docker compose all see the same values without repeating them per command.
 export
@@ -35,10 +42,15 @@ APP_PORT         := $(shell expr 8080 + $(AGENT_SLOT) '*' 10)
 TEMPL_PROXY_PORT := $(shell expr 7331 + $(AGENT_SLOT) '*' 10)
 POSTGRES_PORT    := $(shell expr 5433 + $(AGENT_SLOT) '*' 10)
 
-# The server reads PORT. AGENT_SLOT is deliberately the only knob, so the slot
-# wins over .env here; for a one-off use `make dev PORT=3000`, which as a
-# command-line variable beats everything.
-PORT := $(APP_PORT)
+# Ephemeral database for integration tests: a second, throwaway Postgres that
+# must not share a port or a volume with the one holding your dev data.
+TEST_POSTGRES_PORT := $(shell expr 5434 + $(AGENT_SLOT) '*' 10)
+TEST_APP_PORT      := $(shell expr 8085 + $(AGENT_SLOT) '*' 10)
+
+# The test stack is a separate compose project, not an overlay on the dev one:
+# `docker compose -f a.yml -f b.yml` under one project name would replace the
+# dev postgres container and take your development data with it.
+COMPOSE_TEST_PROJECT := $(COMPOSE_PROJECT_NAME)-test
 
 # ---------------------------------------------------------------------------
 # Configuration (see internal/config/config.go for what the server requires)
@@ -48,18 +60,36 @@ POSTGRES_PASSWORD ?= nap
 POSTGRES_DB       ?= nap
 POSTGRES_SERVICE  ?= postgres
 
-DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
+# PORT, DATABASE_URL and ORIGIN all belong to the slot, so all three are
+# assigned - not defaulted. Letting .env win any one of them re-creates the
+# failure the slot scheme exists to prevent: a `?=` DATABASE_URL next to a `:=`
+# PORT puts slot 2's app on 8100 in front of slot 0's database on 5433, and
+# nothing anywhere reports it. Override for a one-off on the command line,
+# which beats every assignment here: `make test-integration DATABASE_URL=...`.
+PORT         := $(APP_PORT)
+DATABASE_URL := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
 # During `make dev` the browser talks to the templ proxy, not to the app
 # directly, so the browser-facing origin is the proxy's.
-ORIGIN ?= http://localhost:$(TEMPL_PROXY_PORT)
+ORIGIN := http://localhost:$(TEMPL_PROXY_PORT)
+
+TEST_DATABASE_URL := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(TEST_POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
+
+# ORIGIN for the containerised app, which is published on APP_PORT rather than
+# sitting behind the templ proxy. Deployment overrides this with the real URL.
+COMPOSE_ORIGIN      := http://localhost:$(APP_PORT)
+COMPOSE_TEST_ORIGIN := http://localhost:$(TEST_APP_PORT)
+
+# Say so out loud rather than ignoring a value someone took the trouble to set.
+$(foreach v,PORT DATABASE_URL ORIGIN,$(if $(and $(ENV_SUPPLIED_$(v)),$(filter-out $($(v)),$(ENV_SUPPLIED_$(v)))),$(warning .env sets $(v)=$(ENV_SUPPLIED_$(v)), which AGENT_SLOT=$(AGENT_SLOT) overrides with $($(v)). Remove it from .env, or pass $(v)=... on the make command line.)))
 
 # ---------------------------------------------------------------------------
 # Paths and tools
 # ---------------------------------------------------------------------------
 GO             ?= go
 COMPOSE        ?= docker compose
-MIGRATIONS_DIR ?= migrations
+COMPOSE_TEST   := $(COMPOSE) -p $(COMPOSE_TEST_PROJECT) -f docker-compose.yml -f docker-compose.test.yml
+MIGRATIONS_DIR ?= internal/store/migrations
 QUERIES_DIR    ?= queries
 BIN_DIR        ?= bin
 TMP_DIR        ?= tmp
@@ -215,8 +245,8 @@ test: ## Run the unit tests
 	$(GO) test ./...
 
 .PHONY: test-integration
-test-integration: ## Run the integration tests (needs `make setup` first)
-	$(GO) test -tags=integration -count=1 ./...
+test-integration: test-db-up ## Run the integration tests against a throwaway database
+	DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) test -tags=integration -count=1 -p 1 ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint over the module
@@ -274,9 +304,49 @@ seed: ## Load development seed data
 	fi
 
 .PHONY: docker-build
-docker-build: ## Build the production container image
-	@test -f Dockerfile || { echo "Dockerfile is missing - not written yet" >&2; exit 1; }
-	docker build -t $(IMAGE):$(IMAGE_TAG) .
+docker-build: ## Build the shipped image (distroless, server binary only)
+	docker build --target final -t $(IMAGE):$(IMAGE_TAG) .
+
+.PHONY: compose-up
+compose-up: ## Bring the whole stack up in containers (migrations gate the app)
+	$(COMPOSE) up -d --build
+	@echo "==> app on http://localhost:$(APP_PORT) (project $(COMPOSE_PROJECT_NAME))"
+
+.PHONY: compose-down
+compose-down: ## Stop this slot's stack, keeping its database volume
+	$(COMPOSE) down
+
+.PHONY: compose-nuke
+compose-nuke: ## Stop this slot's stack and delete its database volume
+	$(COMPOSE) down -v
+
+.PHONY: compose-logs
+compose-logs: ## Follow this slot's container logs
+	$(COMPOSE) logs -f
+
+.PHONY: compose-config
+compose-config: ## Print the fully resolved compose config for this slot
+	$(COMPOSE) config
+
+.PHONY: compose-test-config
+compose-test-config: ## Print the fully resolved test-stack config for this slot
+	$(COMPOSE_TEST) config
+
+# ---------------------------------------------------------------------------
+# Throwaway test database
+# ---------------------------------------------------------------------------
+.PHONY: test-db-up
+# `run` rather than `up -d` for the migrator on purpose: it runs in the
+# foreground and returns goose's exit code, so a broken migration fails this
+# target instead of handing the tests an empty database to fail against.
+test-db-up: ## Start the disposable test database and migrate it
+	$(COMPOSE_TEST) up -d --build postgres
+	$(COMPOSE_TEST) run --rm --build migrate
+	@echo "==> test database on localhost:$(TEST_POSTGRES_PORT) (project $(COMPOSE_TEST_PROJECT))"
+
+.PHONY: test-db-down
+test-db-down: ## Stop and erase the disposable test database
+	$(COMPOSE_TEST) down -v
 
 # Prints the slot-derived environment. Useful when two agents are debugging why
 # they are or are not sharing something.
@@ -284,8 +354,14 @@ docker-build: ## Build the production container image
 slot-env: ## Print the environment this slot derives
 	@echo "AGENT_SLOT=$(AGENT_SLOT)"
 	@echo "COMPOSE_PROJECT_NAME=$$COMPOSE_PROJECT_NAME"
+	@echo "COMPOSE_TEST_PROJECT=$$COMPOSE_TEST_PROJECT"
+	@echo "APP_PORT=$$APP_PORT"
 	@echo "PORT=$$PORT"
 	@echo "TEMPL_PROXY_PORT=$$TEMPL_PROXY_PORT"
 	@echo "POSTGRES_PORT=$$POSTGRES_PORT"
+	@echo "TEST_POSTGRES_PORT=$$TEST_POSTGRES_PORT"
+	@echo "TEST_APP_PORT=$$TEST_APP_PORT"
 	@echo "DATABASE_URL=$$DATABASE_URL"
+	@echo "TEST_DATABASE_URL=$$TEST_DATABASE_URL"
 	@echo "ORIGIN=$$ORIGIN"
+	@echo "COMPOSE_ORIGIN=$$COMPOSE_ORIGIN"
