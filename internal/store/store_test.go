@@ -684,3 +684,149 @@ func TestSignInTakeoverIsBlocked(t *testing.T) {
 	}
 	t.Logf("same subject:  repeat sign-in still updates (display_name=%q)", repeat.DisplayName)
 }
+
+// TestNoActionVersusRestrictIsNotCosmetic keeps the comment on
+// ballot_entry_movie_fkey honest.
+//
+// That comment used to claim RESTRICT is checked per row while NO ACTION waits
+// for end of statement. It was false, and because it read plausibly it
+// convinced two reviews before anyone executed it. The remedy for a comment
+// that lies is not a better-written comment; it is a test that fails when the
+// claim stops being true. So this builds the trap on a live server.
+func TestNoActionVersusRestrictIsNotCosmetic(t *testing.T) {
+	pool := connect(t)
+	tx := begin(t, pool)
+	ctx := context.Background()
+
+	mustExec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("exec %.60q: %v", sql, err)
+		}
+	}
+	mustExec(`CREATE TABLE fk_parent (id int PRIMARY KEY)`)
+	mustExec(`CREATE TABLE fk_child_na (id int PRIMARY KEY, p int,
+	            CONSTRAINT fk_na FOREIGN KEY (p) REFERENCES fk_parent(id)
+	            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED)`)
+	mustExec(`CREATE TABLE fk_child_re (id int PRIMARY KEY, p int,
+	            CONSTRAINT fk_re FOREIGN KEY (p) REFERENCES fk_parent(id)
+	            ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED)`)
+
+	// 1. pg_constraint reports both as deferred. This is the column a reviewer
+	//    reaches for, and for RESTRICT it is not the truth.
+	for _, name := range []string{"fk_na", "fk_re"} {
+		var deferrable, deferred bool
+		if err := tx.QueryRow(ctx,
+			`SELECT condeferrable, condeferred FROM pg_constraint WHERE conname = $1`, name).
+			Scan(&deferrable, &deferred); err != nil {
+			t.Fatalf("pg_constraint %s: %v", name, err)
+		}
+		if !deferrable || !deferred {
+			t.Errorf("pg_constraint.%s = (%v,%v); the premise of this test is that it "+
+				"reports BOTH as deferred", name, deferrable, deferred)
+		}
+		t.Logf("pg_constraint %-5s condeferrable=%v condeferred=%v", name, deferrable, deferred)
+	}
+
+	// 2. pg_trigger tells the truth: RESTRICT's delete-side trigger was
+	//    silently downgraded to immediate.
+	countImmediateTriggers := func(constraint string) int {
+		t.Helper()
+		var n int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid
+			 WHERE c.conname = $1 AND NOT t.tgdeferrable`, constraint).Scan(&n); err != nil {
+			t.Fatalf("pg_trigger %s: %v", constraint, err)
+		}
+		return n
+	}
+	if n := countImmediateTriggers("fk_na"); n != 0 {
+		t.Errorf("NO ACTION has %d non-deferrable trigger(s), want 0", n)
+	}
+	if n := countImmediateTriggers("fk_re"); n == 0 {
+		t.Error("RESTRICT has no non-deferrable trigger: the silent downgrade this " +
+			"comment warns about no longer happens, so the comment needs rewriting")
+	} else {
+		t.Logf("pg_trigger    fk_re has %d non-deferrable trigger(s) -- the silent downgrade", n)
+	}
+
+	// 3. The behavioural consequence, which is what actually matters.
+	mustExec(`INSERT INTO fk_parent VALUES (1),(2)`)
+	mustExec(`INSERT INTO fk_child_na VALUES (1,1)`)
+	mustExec(`INSERT INTO fk_child_re VALUES (1,2)`)
+
+	// NO ACTION: delete the parent while a child still points at it, then tidy
+	// up. Forcing the check proves it really was deferred until now.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	if _, err := sp.Exec(ctx, `DELETE FROM fk_parent WHERE id = 1`); err != nil {
+		t.Fatalf("NO ACTION: parent delete should have been deferred, got: %v", err)
+	}
+	if _, err := sp.Exec(ctx, `DELETE FROM fk_child_na WHERE p = 1`); err != nil {
+		t.Fatalf("NO ACTION: child delete: %v", err)
+	}
+	if _, err := sp.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+		t.Fatalf("NO ACTION: deferred check failed at the point of forcing it: %v", err)
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	t.Logf("behaviour     NO ACTION: parent-then-child in one txn -> check deferred, passes")
+
+	// RESTRICT: the identical first statement, with the identical DEFERRABLE
+	// INITIALLY DEFERRED clause, fails on the spot.
+	sp2, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	_, err = sp2.Exec(ctx, `DELETE FROM fk_parent WHERE id = 2`)
+	if err == nil {
+		t.Error("RESTRICT deferred its check: the silent downgrade no longer happens, " +
+			"so the comment on ballot_entry_movie_fkey needs rewriting")
+	} else {
+		t.Logf("behaviour     RESTRICT:  same clause, same statement -> %v", err)
+	}
+	if err := sp2.Rollback(ctx); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+
+	// 4. The false claim itself: with neither constraint deferred, both are
+	//    end-of-statement, so a CTE removing child and parent together passes
+	//    under either. This is the assertion that would have caught the
+	//    original comment.
+	mustExec(`CREATE TABLE fk_p2 (id int PRIMARY KEY)`)
+	mustExec(`CREATE TABLE fk_c2_na (id int PRIMARY KEY, p int REFERENCES fk_p2(id) ON DELETE NO ACTION)`)
+	mustExec(`CREATE TABLE fk_c2_re (id int PRIMARY KEY, p int REFERENCES fk_p2(id) ON DELETE RESTRICT)`)
+	for i, child := range []string{"fk_c2_na", "fk_c2_re"} {
+		id := i + 1
+		mustExec(`INSERT INTO fk_p2 VALUES ($1)`, id)
+		mustExec(`INSERT INTO `+child+` VALUES ($1,$1)`, id)
+		_, err := tx.Exec(ctx,
+			`WITH gone AS (DELETE FROM `+child+` WHERE p = $1 RETURNING p)
+			 DELETE FROM fk_p2 WHERE id IN (SELECT p FROM gone)`, id)
+		if err != nil {
+			t.Errorf("%s: single-statement delete failed (%v). If only one of these two "+
+				"fails, the old per-row-vs-end-of-statement claim is true after all "+
+				"and this test is what is wrong", child, err)
+		}
+	}
+	t.Log("behaviour     non-deferrable: NO ACTION and RESTRICT both pass the same " +
+		"single-statement delete -- they are NOT per-row vs end-of-statement")
+
+	// 5. And the shipped constraints really are NO ACTION ('a'), not RESTRICT
+	//    ('r'). Everything above is about a distinction that only matters if
+	//    this holds.
+	for _, name := range []string{"ballot_entry_movie_fkey", "result_winner_movie_fkey"} {
+		var delType string
+		if err := tx.QueryRow(ctx,
+			`SELECT confdeltype FROM pg_constraint WHERE conname = $1`, name).Scan(&delType); err != nil {
+			t.Fatalf("confdeltype %s: %v", name, err)
+		}
+		if delType != "a" {
+			t.Errorf("%s has confdeltype %q, want \"a\" (NO ACTION)", name, delType)
+		}
+		t.Logf("shipped       %-24s confdeltype=%q (a = NO ACTION)", name, delType)
+	}
+}

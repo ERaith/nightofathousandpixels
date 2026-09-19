@@ -24,13 +24,35 @@ CREATE TABLE ballot_entry (
         REFERENCES season_member (season_id, person_id) ON DELETE CASCADE,
 
     -- This blocks a bare `DELETE FROM movie WHERE id = ...` -- soft-delete
-    -- with hidden = true instead. NO ACTION rather than RESTRICT: RESTRICT is
-    -- checked after each row, NO ACTION at end of statement. Both pass the
-    -- `DELETE FROM season` cascade today (measured, not assumed), but only
-    -- because Postgres happens to walk season -> season_member ->
-    -- ballot_entry before season -> movie. That ordering is not guaranteed,
-    -- and NO ACTION does not depend on it: by end of statement the ballot
-    -- rows are gone either way.
+    -- with hidden = true instead.
+    --
+    -- NO ACTION rather than RESTRICT, but NOT for the reason an earlier
+    -- version of this comment gave. It claimed RESTRICT is checked after each
+    -- row while NO ACTION waits for end of statement. That is false, and it
+    -- misled two reviews before anyone ran it: both are AFTER ROW triggers
+    -- drained from the same end-of-statement FIFO queue, and a single
+    -- data-modifying CTE that removes the ballot rows and the movie together
+    -- succeeds under either one.
+    --
+    -- The real difference is deferrability. NO ACTION honours DEFERRABLE
+    -- INITIALLY DEFERRED; RESTRICT accepts the clause and is then SILENTLY
+    -- DOWNGRADED to an immediate check. Nothing in pg_constraint shows it --
+    -- condeferrable and condeferred both read true for a DEFERRABLE INITIALLY
+    -- DEFERRED RESTRICT, which is exactly the column a reviewer reaches for.
+    -- The downgrade is visible only on the delete-side trigger:
+    --
+    --   SELECT c.conname, t.tgname, t.tgdeferrable, t.tginitdeferred
+    --   FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid
+    --   WHERE c.conname = 'ballot_entry_movie_fkey';
+    --
+    -- So do not "tidy" this into RESTRICT because the two look equivalent
+    -- today. They are equivalent only while this constraint stays immediate;
+    -- the day anything needs to defer it to commit, RESTRICT would go on
+    -- reporting itself as deferred while checking immediately.
+    --
+    -- Both do pass the `DELETE FROM season` cascade today (measured, not
+    -- assumed), because by the time the queue drains at end of statement the
+    -- ballot rows are gone either way.
     CONSTRAINT ballot_entry_movie_fkey FOREIGN KEY (season_id, movie_id)
         REFERENCES movie (season_id, id) ON DELETE NO ACTION,
 
