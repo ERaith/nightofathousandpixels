@@ -1,3 +1,25 @@
+//go:build integration
+
+// Live-database tests. They are behind the `integration` build tag, which is
+// the repository's one contract for "this test needs Postgres":
+//
+//     go test ./...                  compiles nothing in this file
+//     make test                      the same, and says so
+//     make test-integration          starts a database, migrates it, runs this
+//
+// The tag exists because the alternative did not work. This file used to be
+// untagged and to skip when TEST_DATABASE_URL was empty, so a bare
+// `go test ./...` printed `ok  internal/store` having run no database test at
+// all -- for months, including the runs used to justify merges (nap-gn1). A
+// skip that fires by default is indistinguishable from a pass in every summary
+// anyone actually reads.
+//
+// With the tag, the untagged run does not compile these tests, `make test`
+// prints what it left out, and `make test-integration` fails outright if the
+// tag selects nothing. A missing TEST_DATABASE_URL is therefore a FATAL here
+// rather than a skip: under this tag the database is the point, so its absence
+// is a broken invocation, not a reason to go quietly green.
+
 package auth
 
 import (
@@ -32,15 +54,18 @@ import (
 // The test drives the real flow against a real database and asserts the empty
 // subject never arrives.
 
-// connectDB opens a pool against TEST_DATABASE_URL, skipping when it is unset
-// so the package still tests without Docker. It mirrors internal/store's own
-// harness, which lives in that package's test binary and cannot be imported.
+// connectDB opens a pool against TEST_DATABASE_URL. Under the integration tag
+// a missing DSN is fatal, not a skip -- see the note at the top of this file.
+// It mirrors internal/store's own harness, which lives in that package's test
+// binary and cannot be imported.
 func connectDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping cross-package sign-in test")
+		t.Fatal("TEST_DATABASE_URL is not set.\n" +
+			"These tests are built with -tags=integration, which means they need a database.\n" +
+			"Run them with `make test-integration`, which starts and migrates one.")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

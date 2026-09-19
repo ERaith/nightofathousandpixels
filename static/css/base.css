@@ -452,7 +452,67 @@ hr {
 
    Do not consume --_tap or --_fs-body bare in a rule that is meant to be a
    floor; wrap it in max() as below.
+
+   3. THE TOKENS THAT HAVE NO FLOOR. max() only answers (2) for a token whose
+      guarantee is "at least this much". A ring's colour, a ring's presence
+      and an error message's colour are not quantities you can floor: there
+      is no max() of `transparent` and `#ff7b72` that means "still legible".
+      Those tokens are SEALED in the block below instead — redeclared inside
+      the layer, with !important, on every element, so a pack cannot set them
+      anywhere.
+
+      This is the hole nap-cfs was filed for. The max() floors landed on
+      --_tap and --_fs-body and were never carried across to the focus
+      tokens, so three lines with no !important, no @layer and nothing
+      cleverer than a descendant selector
+
+          html body { --_focus-width: 0px; --_focus-offset: 0px;
+                      --_focus: transparent; }
+
+      removed all 22 focus rings on themes/preview.html while both max()
+      floors held. Base still WON the cascade — the computed outline-style
+      stayed `solid` — and then painted a 0px transparent ring, which is
+      exactly what (2) above warns about, applied to the wrong two tokens.
+
+      Sealing is not the default answer, it is the answer where there is no
+      floor. --_tap and --_fs-body stay sealed-free on purpose: max() lets a
+      pack raise them, and a sealed token cannot be raised.
    -------------------------------------------------------------------------- */
+
+@layer nap-enforce {
+  /* The seal. Every element, so there is no descendant a pack can move the
+     value on; !important inside the layer, so an unlayered pack important at
+     any specificity still loses.
+
+     Each value is re-derived from the PUBLIC token rather than from the
+     private one, so legitimate theming survives — a pack can still colour
+     the focus ring by setting --accent — while a pack that poisons the
+     private --_accent no longer reaches the ring through it. */
+  *,
+  *::before,
+  *::after {
+    /* Presence and geometry of the focus ring. Not public, not floorable. */
+    --_focus: var(--accent, #7cc4ff) !important;
+    --_focus-width: 3px !important;
+    --_focus-offset: 2px !important;
+
+    /* Status colours. Section 1 already calls these base-owned and fixed —
+       "a pack does not get to make an error message unreadable" — but until
+       now nothing stopped one. `html body { --_danger: transparent }`
+       computed .field__error's colour to rgba(0, 0, 0, 0): the validation
+       message stayed in the accessibility tree and vanished from the page. */
+    --_ok: #3fb950 !important;
+    --_warn: #d29922 !important;
+    --_danger: #ff7b72 !important;
+
+    /* Text drawn on top of --accent. Its whole contrast argument is that it
+       IS the page background, so the pack's own accent:bg ratio carries over
+       (section 1). Poisoning it broke that: `--_on-accent: transparent` left
+       every primary button with an invisible label. Derived from the public
+       --bg so a pack changing the background still changes this with it. */
+    --_on-accent: var(--bg, #101219) !important;
+  }
+}
 
 @layer nap-enforce {
   /* What 1rem means. A pack winning this drags every rem-based size down
@@ -480,6 +540,20 @@ hr {
   .wordmark,
   .check {
     min-block-size: max(44px, var(--_tap)) !important;
+  }
+
+  /* Form controls: 16px, never less. Section 7 sets the same value, but it
+     sets it UNLAYERED, so `html body input { font-size: 6px }` beat it —
+     measured, the smallest control on themes/preview.html computed to 6px.
+     Form text is body text, and under 16px iOS Safari zooms the viewport on
+     focus, which on a phone reads as the page breaking.
+
+     1em rather than a token: a pack that wants larger controls raises the
+     font-size of the field around them and this follows it up. */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: max(1rem, 1em) !important;
   }
 }
 

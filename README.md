@@ -147,8 +147,31 @@ Two notes on cookies, both of which are silent when wrong:
 make test              # unit tests; does NOT touch a database
 make test-integration  # starts a throwaway postgres and runs against it
 make lint
+make check             # every gate at once - what CI should run
 make no-mock-provider-in-server   # fails if the mock provider can reach the server binary
 ```
+
+**A test that needs Postgres carries `//go:build integration`.** That is the
+whole contract, and it is checked rather than documented, because the version
+that was only documented was false for months.
+
+`make test` does not compile those files, so it needs no Docker and it prints
+what it left out. `make test-integration` is the only path that touches a
+database; it starts and migrates a throwaway one, and it **refuses to run if
+the tag selects no tests**. That last guard is the important one: before it,
+`-tags=integration` matched no file in the repository, so the integration
+suite was empty and every green it produced meant nothing — while the same
+tests, untagged, skipped under a bare `go test ./...` and let the package print
+`ok` having connected to nothing (nap-gn1).
+
+Two more guards keep it true as the tree grows, both in the ordinary unit
+suite:
+
+* `TestEveryDatabaseTestCarriesTheIntegrationTag` fails if a database test
+  joins the unit suite.
+* `TestTheDSNCheckIsFatalNotASkip` fails if one of them goes back to skipping
+  when `TEST_DATABASE_URL` is empty. Under the tag, an absent database is a
+  broken invocation, not a reason to report `ok`.
 
 That last target is not ceremony. The mock OIDC provider is a separate `main`
 package, so `go list -deps ./cmd/server` does not mention

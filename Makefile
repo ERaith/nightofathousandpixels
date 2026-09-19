@@ -29,6 +29,18 @@ ENV_SUPPLIED_OAUTH_ISSUER_URL := $(OAUTH_ISSUER_URL)
 # docker compose all see the same values without repeating them per command.
 export
 
+# ...with one exception. TEST_DATABASE_URL is what the live-database tests
+# read, so a bare `export` puts it in front of EVERY recipe, including ones
+# that start no database. That is how `make test` came to dial a database it
+# had not started, and it is why the skip those tests carried never fired
+# under make - the variable was never empty (nap-gn1).
+#
+# The tests are behind `//go:build integration` now, so this is belt and
+# braces rather than the fix, but it makes the integration target's
+# correctness visible instead of incidental: `make test-integration` passes
+# the DSN explicitly in its own recipe, and nothing else can reach it.
+unexport TEST_DATABASE_URL
+
 # ---------------------------------------------------------------------------
 # Agent slot: one genuinely private stack per agent.
 # ---------------------------------------------------------------------------
@@ -141,17 +153,20 @@ GOOSE_MIGRATION_DIR := $(MIGRATIONS_DIR)
 # Directories no watcher should ever walk: the archived 2025 Next.js app, other
 # agents' worktrees, and build output.
 WATCH_EXCLUDE_DIRS := archive,worktrees,node_modules,tmp,bin,.git,.beads,testdata
-TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
-# The same list, ANCHORED at this checkout's root, with the root regex-escaped.
+# The same list for templ, ANCHORED at this checkout's root, with the root
+# regex-escaped. Both halves are load-bearing (nap-hil).
 #
-# templ matches the ignore pattern against ABSOLUTE paths, and TEMPL_IGNORE
-# above is unanchored. Inside worktrees/<agent>/ every absolute path therefore
-# contains "/worktrees/", the pattern matches every file in the tree, and templ
-# generates nothing while printing a tick and exiting 0 (nap-hil).
+# templ matches its ignore pattern against ABSOLUTE paths. The original
+# pattern was unanchored - (^|/)(archive|worktrees|...)(/|$) - so inside
+# worktrees/<agent>/ every absolute path contained "/worktrees/", the pattern
+# matched every file in the tree, and templ generated nothing while printing a
+# tick and exiting 0. `make build` depends on `templ-generate`, so every agent
+# working in a worktree was building from committed *_templ.go and a .templ
+# edit could silently fail to take effect.
 #
-# Three fixes were tried before this one, and the first two are instructive
-# because each reintroduced the bug by another route:
+# Three fixes were tried before this one, and each reintroduced the bug by
+# another route. The history is kept because the shape of it is the lesson:
 #
 #   - Dropping "worktrees" removes the protection it exists for. The main
 #     clone holds every agent's worktree, so templ would walk into all of them
@@ -171,13 +186,18 @@ TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 # only both together fix both. Verified with a repo root at "<tmp>/c++(x)",
 # which has metacharacters and an ambient "tmp" at once.
 #
-# Scoped to the e2e guard rather than replacing TEMPL_IGNORE: that is nap-hil's
-# to change and several agents run the shared targets.
+# Anchoring also makes "worktrees" inert inside a worktree that has none, so
+# this is one string in both locations with no conditional to reason about.
 #
 # (A single quote in the repository path would break the shell quoting below.
 # Nothing else in this Makefile survives that either.)
-TEMPL_ROOT_RE    := $(shell printf '%s' '$(CURDIR)' | sed 's/[][\.^$$*+?(){}|\/]/\\&/g')
-TEMPL_IGNORE_E2E := ^$(TEMPL_ROOT_RE)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+TEMPL_ROOT_RE := $(shell printf '%s' '$(CURDIR)' | sed 's/[][\.^$$*+?(){}|\/]/\\&/g')
+TEMPL_IGNORE  := ^$(TEMPL_ROOT_RE)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+
+# Where to look for templates, for the guards below. Mirrors the ignore
+# pattern; `find` is used rather than the pattern itself because the guards
+# need a file list, not a predicate.
+TEMPL_FIND := find $(CURDIR) \( -name archive -o -name worktrees -o -name node_modules -o -name tmp -o -name bin -o -name .git \) -prune -o -name '*.templ' -print
 
 .DEFAULT_GOAL := help
 
@@ -327,17 +347,92 @@ build: templ-generate ## Compile the server into bin/
 	$(GO) build -o $(SERVER_BIN) ./cmd/server
 	@echo "==> built $(SERVER_BIN)"
 
+# ---------------------------------------------------------------------------
+# THE TEST CONTRACT (nap-gn1). One rule, applied everywhere:
+#
+#   A test that needs Postgres carries `//go:build integration`.
+#
+#   make test              unit only. Does not compile the database tests, does
+#                          not need Docker, and says what it left out.
+#   make test-integration  the ONLY path that touches Postgres. Starts and
+#                          migrates a throwaway database first, and refuses to
+#                          run if the tag selects no tests.
+#
+# What this replaces: the database tests were untagged and skipped when
+# TEST_DATABASE_URL was empty, so `go test ./...` printed `ok internal/store`
+# having run none of them - for months, including the runs used to justify
+# merges. Meanwhile `-tags=integration` selected nothing, because no file in
+# the repository carried the tag; test-integration worked only because
+# test-db-up happened to start a database and the bare `export` at the top of
+# this file happened to leak TEST_DATABASE_URL into the recipe.
+#
+# Both halves are now checked rather than documented. The untagged suite
+# carries TestEveryDatabaseTestCarriesTheIntegrationTag, which fails if a
+# database test joins it; this file carries test-integration-selects-tests,
+# which fails if the tag stops selecting anything.
+# ---------------------------------------------------------------------------
+
 .PHONY: test
-test: ## Run the unit tests
+test: ## Run the unit tests (no database, no Docker)
 	$(GO) test ./...
+	@echo ""
+	@echo "==> unit tests only. The live-database tests are behind"
+	@echo "    -tags=integration and were NOT compiled. Run them with:"
+	@echo "        make test-integration"
 
 .PHONY: test-integration
-test-integration: test-db-up ## Run the integration tests against a throwaway database
-	DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) test -tags=integration -count=1 -p 1 ./...
+test-integration: test-db-up test-integration-selects-tests ## Run the integration tests against a throwaway database
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) test -tags=integration -count=1 -p 1 ./...
+
+# The guard that turns a silently-empty suite into a red build.
+#
+# `go test -tags=integration ./...` reports `ok` for a package whose tagged
+# tests all vanished, exactly as it reported `ok` for a package whose tests all
+# skipped. So compare the test list WITH the tag against the list WITHOUT it:
+# if the tag adds nothing, the integration suite is empty and every green it
+# produces is meaningless. -list compiles the binaries but runs no test, so
+# this needs no database and costs a compile.
+.PHONY: test-integration-selects-tests
+test-integration-selects-tests: ## Fail if -tags=integration selects no tests
+	@base=$$(mktemp); \
+	$(GO) test -list '.*' ./... 2>/dev/null | grep '^Test' | sort -u > "$$base"; \
+	added=$$($(GO) test -tags=integration -list '.*' ./... 2>/dev/null \
+		| grep '^Test' | sort -u | grep -vxF -f "$$base" || true); \
+	rm -f "$$base"; \
+	n=$$(printf '%s\n' "$$added" | grep -c '^Test' || true); \
+	if [ "$$n" -eq 0 ]; then \
+		echo "" >&2; \
+		echo "-tags=integration selects NO tests that ./... does not already run." >&2; \
+		echo "" >&2; \
+		echo "The integration suite is empty, so it cannot fail, so its green" >&2; \
+		echo "means nothing. Either no file carries '//go:build integration'," >&2; \
+		echo "or the tag was removed from the ones that did." >&2; \
+		echo "" >&2; \
+		echo "Expected: internal/store, internal/store/integrity, internal/auth." >&2; \
+		exit 1; \
+	fi; \
+	echo "==> ok: -tags=integration adds $$n test(s) the unit suite does not run"
+
+# `go vet` only checks the files it compiles, so without the tag it stops
+# looking at the database tests entirely - the same gap as the tests
+# themselves, one level down.
+.PHONY: vet
+vet: ## Vet both build configurations
+	$(GO) vet ./...
+	$(GO) vet -tags=integration ./...
 
 .PHONY: lint
-lint: ## Run golangci-lint over the module
+lint: ## Run golangci-lint over the module, both build configurations
 	$(GO) tool golangci-lint run ./...
+	$(GO) tool golangci-lint run --build-tags=integration ./...
+
+# Everything a merge should have to pass. nap-2n0's GitHub Actions workflow
+# should call this rather than re-listing the steps, so that a guard added here
+# is a guard CI runs.
+.PHONY: check
+check: templ-fresh vet lint test themes-check test-integration ## Run every gate: generation, vet, lint, unit, themes, integration
+	@echo ""
+	@echo "==> all gates passed"
 
 # The theme-pack contract is enforced in CSS and checked by a stdlib-only
 # python script; no node, no npm, nothing to install.
@@ -383,8 +478,85 @@ sqlc-generate: ## Generate Go from queries/*.sql
 	$(GO) tool sqlc generate
 
 .PHONY: templ-generate
-templ-generate: ## Generate Go from *.templ
+templ-generate: templ-ignore-sane ## Generate Go from *.templ
 	$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE)'
+
+# The cheap half of nap-hil's guard, and the one that runs on every build.
+#
+# The bug was never that templ failed; it was that templ succeeded at doing
+# nothing, because the ignore pattern matched this checkout's own files. That
+# is one predicate away from being detectable: take a template this repository
+# really has and ask whether the pattern excludes it. If it does, nothing this
+# target could generate would ever be generated, and `make build` would go on
+# to compile stale committed output and look fine.
+#
+# grep -E and Go's regexp agree on the pattern this Makefile builds (checked
+# against both, on the anchored form and the old unanchored one).
+.PHONY: templ-ignore-sane
+templ-ignore-sane:
+	@t=$$($(TEMPL_FIND) | head -1); \
+	if [ -z "$$t" ]; then \
+		echo "==> no .templ files in $(CURDIR) - nothing to generate"; \
+		exit 0; \
+	fi; \
+	if printf '%s\n' "$$t" | grep -Eq '$(TEMPL_IGNORE)'; then \
+		echo "" >&2; \
+		echo "TEMPL_IGNORE excludes this checkout's OWN templates:" >&2; \
+		echo "  pattern:  $(TEMPL_IGNORE)" >&2; \
+		echo "  template: $$t" >&2; \
+		echo "" >&2; \
+		echo "templ would print a tick, report updates=0 and generate nothing," >&2; \
+		echo "and the build would then compile stale committed *_templ.go." >&2; \
+		echo "This is nap-hil. Check TEMPL_ROOT_RE against \$$(CURDIR)." >&2; \
+		exit 1; \
+	fi
+
+# The expensive half: is the committed output actually what these templates
+# generate? Promoted out of the e2e-only scope, because every consumer of the
+# committed *_templ.go has the same problem - the shipped image is built from
+# them (the Dockerfile only runs `go build`), so a .templ edited without
+# regenerating produces tests that pass against markup nobody is serving.
+#
+# It DELETES the tracked generated files first and regenerates them from
+# scratch, which is what makes it catch both failures with one check:
+#
+#   files come back modified  -> the committed output was stale
+#   files stay deleted        -> templ generated nothing at all (nap-hil)
+#
+# A plain regenerate-and-diff catches only the first: if templ ignores every
+# file it writes nothing, the tree stays clean, and the guard passes for the
+# exact reason it exists to catch. Only tracked files are removed, so
+# `git checkout -- '*_templ.go'` always puts the tree back.
+#
+# It must run the SAME `-path .` as templ-generate. templ bakes the source
+# path into the FileName of every templ.Error it emits, so regenerating with a
+# narrower -path rewrites that string in every generated file and reports pure
+# churn as drift - a false failure indistinguishable from the real one.
+.PHONY: templ-fresh
+templ-fresh: templ-ignore-sane ## Fail if the committed templ output is stale or was never generated
+	@git ls-files -z -- '*_templ.go' | xargs -0 rm -f
+	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE)' >/dev/null
+	@changed="$$(git status --porcelain -- '*_templ.go')"; \
+	if [ -z "$$changed" ]; then \
+		echo "==> ok: the committed templ output matches the templates"; \
+		exit 0; \
+	fi; \
+	echo "" >&2; \
+	if printf '%s\n' "$$changed" | grep -q '^ *D'; then \
+		echo "templ did NOT regenerate these files - they are still deleted:" >&2; \
+		printf '%s\n' "$$changed" >&2; \
+		echo "" >&2; \
+		echo "templ ran, exited 0 and wrote nothing. That is nap-hil's symptom." >&2; \
+		echo "Restore the tree with: git checkout -- '*_templ.go'" >&2; \
+	else \
+		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
+		printf '%s\n' "$$changed" >&2; \
+		echo "" >&2; \
+		echo "The shipped image and the e2e suite are built from the COMMITTED" >&2; \
+		echo "output, so they would have run against markup nobody is serving." >&2; \
+		echo "Review the diff and commit it." >&2; \
+	fi; \
+	exit 1
 
 # ---------------------------------------------------------------------------
 # Data and images
@@ -490,27 +662,12 @@ e2e-env: ## Print the environment the e2e suite runs against
 # The browser tests assert on rendered HTML, and the image they run against is
 # built from the COMMITTED *_templ.go - the Dockerfile only runs `go build`.
 # So a .templ edited without regenerating produces a suite that passes against
-# markup nobody is serving any more. Inside a worktree that is not hypothetical:
-# `make templ-generate` silently generates nothing there (nap-hil), so the
-# normal way of keeping them in step does not work and says nothing about it.
-#
-# This regenerates IN PLACE and fails if anything changed. Delete it when
-# nap-hil lands and templ-generate is trustworthy everywhere.
-.PHONY: e2e-templ-fresh
-e2e-templ-fresh: ## Fail if the committed templ output is stale
-	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_E2E)' >/dev/null
-	@if [ -n "$$(git status --porcelain -- '*_templ.go')" ]; then \
-		echo "" >&2; \
-		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
-		git status --short -- '*_templ.go' >&2; \
-		echo "" >&2; \
-		echo "The e2e suite tests the committed output, so it would have passed" >&2; \
-		echo "against markup nobody is serving. Review the diff and commit it." >&2; \
-		exit 1; \
-	fi
-
+# markup nobody is serving any more. That check is `templ-fresh`, up with the
+# other code-generation targets: it was e2e-templ-fresh until nap-hil landed,
+# and it is shared now because every consumer of the committed output has the
+# same problem.
 .PHONY: e2e
-e2e: e2e-install e2e-typecheck e2e-templ-fresh ## Run the Playwright end-to-end suite against a throwaway stack
+e2e: e2e-install e2e-typecheck templ-fresh ## Run the Playwright end-to-end suite against a throwaway stack
 	cd e2e && npx playwright test $(E2E_ARGS)
 
 # Playwright transpiles TypeScript without type-checking it, so a spec with a
@@ -566,7 +723,7 @@ slot-env: ## Print the environment this slot derives
 	@echo "TEST_APP_PORT=$$TEST_APP_PORT"
 	@echo "TEST_OIDC_PORT=$$TEST_OIDC_PORT"
 	@echo "DATABASE_URL=$$DATABASE_URL"
-	@echo "TEST_DATABASE_URL=$$TEST_DATABASE_URL"
+	@echo "TEST_DATABASE_URL=$(TEST_DATABASE_URL)   <- not exported; make test-integration passes it in its own recipe"
 	@echo "ORIGIN=$$ORIGIN"
 	@echo "OIDC_PORT=$$OIDC_PORT"
 	@echo "OAUTH_ISSUER_URL=$$OAUTH_ISSUER_URL"
