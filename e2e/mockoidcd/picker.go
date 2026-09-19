@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"html/template"
 	"log"
 	"net/http"
@@ -77,6 +78,39 @@ func pickUser(m *mockoidc.MockOIDC, users []devusers.User) http.Handler {
 		}
 
 		if chosen == "" {
+			// Let mockoidc decide whether this request is even valid before
+			// offering anybody a list of names.
+			//
+			// The picker used to render as soon as it saw no choice, which
+			// meant m.Authorize never ran and client_id, response_type, scope
+			// and code_challenge_method were never checked. An authorize
+			// request carrying a bogus client_id got a 200 and a list of real
+			// people to click. Google answers an unknown client with an
+			// error, and a provider that exists to be a faithful stand-in has
+			// to do the same -- otherwise a mistyped OAUTH_CLIENT_ID in .env
+			// shows a working-looking picker and the failure surfaces later
+			// and somewhere else. Found by builder-5's e2e suite.
+			//
+			// The validation is DELEGATED rather than reimplemented here. A
+			// copy of mockoidc's rules in this file would drift from them,
+			// and the way it would drift is precisely back into this bug:
+			// a request mockoidc rejects but our copy accepts gets the picker
+			// again. So m.Authorize is run against a throwaway recorder and
+			// asked what it thinks.
+			//
+			// Two things make that safe rather than clever. Every check in
+			// m.Authorize runs BEFORE it pops the user queue, so a rejected
+			// request consumes nothing. And this branch is only reachable
+			// with an empty queue -- the check above returned false under the
+			// same lock -- so even the accepted case pops nothing but
+			// mockoidc's own DefaultUser, into a response that is discarded.
+			probe := &capturedResponse{header: http.Header{}}
+			m.Authorize(probe, r)
+			if probe.status >= http.StatusBadRequest {
+				probe.replayTo(w)
+				return
+			}
+
 			renderPicker(w, r, users)
 			return
 		}
@@ -112,6 +146,43 @@ func pickUser(m *mockoidc.MockOIDC, users []devusers.User) http.Handler {
 		// that this push is the one it pops.
 		m.Authorize(w, r)
 	})
+}
+
+// capturedResponse is a minimal http.ResponseWriter used to ask m.Authorize
+// what it makes of a request without letting its answer reach the browser.
+//
+// net/http/httptest would do this too, but it has no business being linked
+// into a running binary; this is twenty lines and says exactly what it is.
+type capturedResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func (c *capturedResponse) Header() http.Header { return c.header }
+
+func (c *capturedResponse) Write(b []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.body.Write(b)
+}
+
+func (c *capturedResponse) WriteHeader(status int) {
+	if c.status == 0 {
+		c.status = status
+	}
+}
+
+// replayTo writes the captured response through to a real writer, so the
+// visitor gets mockoidc's own OAuth error verbatim rather than one this file
+// invented.
+func (c *capturedResponse) replayTo(w http.ResponseWriter) {
+	for key, values := range c.header {
+		w.Header()[key] = values
+	}
+	w.WriteHeader(c.status)
+	_, _ = w.Write(c.body.Bytes())
 }
 
 // userQueued reports whether /control/user has pushed an identity that has not
