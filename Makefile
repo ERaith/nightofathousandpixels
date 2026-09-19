@@ -120,6 +120,20 @@ GOOSE_MIGRATION_DIR := $(MIGRATIONS_DIR)
 WATCH_EXCLUDE_DIRS := archive,worktrees,node_modules,tmp,bin,.git,.beads,testdata
 TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
+# The same list, ANCHORED at this checkout's root.
+#
+# TEMPL_IGNORE above is unanchored, and templ matches it against ABSOLUTE
+# paths. Inside worktrees/<agent>/ every absolute path contains "/worktrees/",
+# so the pattern matches every file in the tree and templ generates nothing at
+# all while still printing a tick and exiting 0 (ticket nap-hil). Anchoring at
+# $(CURDIR) means "the worktrees directory belonging to THIS checkout", which
+# is the real intent: it still excludes other agents' checkouts from the main
+# clone, and matches nothing inside a worktree, where there are none.
+#
+# Scoped to the e2e guard below rather than replacing TEMPL_IGNORE, because the
+# shared targets are nap-hil's to change and several agents run them.
+TEMPL_IGNORE_ANCHORED := ^$(CURDIR)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
@@ -396,8 +410,30 @@ e2e-env: ## Print the environment the e2e suite runs against
 	@echo "E2E_CLIENT_SECRET=$(OAUTH_CLIENT_SECRET)"
 	@echo "E2E_COMPOSE_PROJECT=$(COMPOSE_TEST_PROJECT)"
 
+# The browser tests assert on rendered HTML, and the image they run against is
+# built from the COMMITTED *_templ.go - the Dockerfile only runs `go build`.
+# So a .templ edited without regenerating produces a suite that passes against
+# markup nobody is serving any more. Inside a worktree that is not hypothetical:
+# `make templ-generate` silently generates nothing there (nap-hil), so the
+# normal way of keeping them in step does not work and says nothing about it.
+#
+# This regenerates IN PLACE and fails if anything changed. Delete it when
+# nap-hil lands and templ-generate is trustworthy everywhere.
+.PHONY: e2e-templ-fresh
+e2e-templ-fresh: ## Fail if the committed templ output is stale
+	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_ANCHORED)' >/dev/null
+	@if [ -n "$$(git status --porcelain -- '*_templ.go')" ]; then \
+		echo "" >&2; \
+		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
+		git status --short -- '*_templ.go' >&2; \
+		echo "" >&2; \
+		echo "The e2e suite tests the committed output, so it would have passed" >&2; \
+		echo "against markup nobody is serving. Review the diff and commit it." >&2; \
+		exit 1; \
+	fi
+
 .PHONY: e2e
-e2e: e2e-install e2e-typecheck ## Run the Playwright end-to-end suite against a throwaway stack
+e2e: e2e-install e2e-typecheck e2e-templ-fresh ## Run the Playwright end-to-end suite against a throwaway stack
 	cd e2e && npx playwright test $(E2E_ARGS)
 
 # Playwright transpiles TypeScript without type-checking it, so a spec with a

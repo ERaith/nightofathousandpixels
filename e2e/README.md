@@ -197,6 +197,26 @@ these were checked rather than assumed. Each was reverted afterwards.
   `not.toContain("pgx")` in `shipped-image.spec.ts` fails and prints the
   binary's real module list, so the negative assertion is searching actual
   content rather than an empty string.
+- **Edit a template without regenerating.** Changing a heading in `home.templ`
+  and leaving `home_templ.go` alone makes `make e2e` fail in `e2e-templ-fresh`
+  before a browser starts, naming the stale file.
+
+### Stale templates, which is the failure mode this nearly had
+
+The image is built from the **committed** `*_templ.go` — the Dockerfile only
+runs `go build`. So a `.templ` edited without regenerating produces a suite
+that passes happily against markup nobody is serving.
+
+Inside an agent worktree that is not hypothetical. `make templ-generate`
+generates *nothing at all* there while printing a tick and exiting 0
+(**nap-hil**): `TEMPL_IGNORE` is unanchored and templ matches it against
+absolute paths, so `/worktrees/` in the path makes the pattern match every file
+in the tree. Reproduced here — `updates=0`, and a deliberately corrupted
+generated file survived untouched.
+
+`make e2e` therefore runs `e2e-templ-fresh` first, which regenerates with a
+`$(CURDIR)`-anchored pattern and fails if anything changed. Delete it when
+nap-hil lands.
 
 ## Debugging a failure
 
