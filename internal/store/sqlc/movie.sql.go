@@ -206,6 +206,73 @@ func (q *Queries) ListVisibleMoviesForSeason(ctx context.Context, seasonID uuid.
 	return items, nil
 }
 
+const listVisibleMoviesWithSubmitterForSeason = `-- name: ListVisibleMoviesWithSubmitterForSeason :many
+SELECT movie.id, movie.season_id, movie.submitted_by, movie.title, movie.year, movie.tmdb_id, movie.trailer_url, movie.description, movie.hidden, movie.created_at, person.display_name
+FROM movie
+JOIN person ON person.id = movie.submitted_by
+WHERE movie.season_id = $1
+  AND NOT movie.hidden
+ORDER BY movie.created_at, movie.id
+`
+
+type ListVisibleMoviesWithSubmitterForSeasonRow struct {
+	Movie       Movie
+	DisplayName string
+}
+
+// The slate as a page renders it: every live submission, with the name to
+// credit it to.
+//
+// ListVisibleMoviesForSeason returns the same rows without the join and stays
+// as it is -- the tally has no use for a display name. This one exists because
+// the only alternative on the page side is a person lookup per card.
+//
+// An INNER JOIN is safe here, and that is a property of the schema rather than
+// an assumption: movie.submitted_by is NOT NULL and ON DELETE RESTRICT against
+// person, so the submitter row cannot be missing and the join cannot silently
+// drop a film off the slate.
+//
+// Joined to person and deliberately NOT to season_member. Someone removed from
+// the season keeps their films on the slate (see DeleteSeasonMember), and
+// joining through the roster would make those films lose their name -- or,
+// inner-joined, vanish.
+//
+// display_name may be ”: a whitelisted person who has never signed in has no
+// name at all. That blank is the page's to handle (MovieCard.SubmitterLabel),
+// not this query's to paper over -- substituting the email here would put an
+// address on a public page.
+func (q *Queries) ListVisibleMoviesWithSubmitterForSeason(ctx context.Context, seasonID uuid.UUID) ([]ListVisibleMoviesWithSubmitterForSeasonRow, error) {
+	rows, err := q.db.Query(ctx, listVisibleMoviesWithSubmitterForSeason, seasonID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVisibleMoviesWithSubmitterForSeasonRow{}
+	for rows.Next() {
+		var i ListVisibleMoviesWithSubmitterForSeasonRow
+		if err := rows.Scan(
+			&i.Movie.ID,
+			&i.Movie.SeasonID,
+			&i.Movie.SubmittedBy,
+			&i.Movie.Title,
+			&i.Movie.Year,
+			&i.Movie.TmdbID,
+			&i.Movie.TrailerUrl,
+			&i.Movie.Description,
+			&i.Movie.Hidden,
+			&i.Movie.CreatedAt,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setMovieHidden = `-- name: SetMovieHidden :one
 UPDATE movie
 SET hidden = $1

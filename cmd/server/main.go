@@ -21,6 +21,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
+	"github.com/ERaith/nightofathousandpixels/internal/web/board"
 	"github.com/ERaith/nightofathousandpixels/internal/web/health"
 	"github.com/ERaith/nightofathousandpixels/internal/web/middleware"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
@@ -215,18 +216,43 @@ func newRouter(
 
 	r.Method(http.MethodGet, "/healthz", health.NewHandler(pool, logger))
 
+	// The nav lists only routes that exist and that anybody may follow. The
+	// slate is on it because it is public; Submit deliberately is not, even
+	// though it now exists -- a header link that bounces a signed-out visitor
+	// into an OAuth flow they did not ask for is worse than no link, and the
+	// slate already offers "Put a movie up" to the people who can use it and
+	// "Sign in to add yours" to the people who cannot.
 	nav := []templates.NavItem{
 		{Label: "Home", Href: "/"},
+		{Label: "The slate", Href: board.SlatePath},
 		{Label: "Sign in", Href: authenticator.LoginPath()},
 	}
 
-	signin.New(signin.Options{
+	queries := store.New(pool)
+
+	accounts := signin.New(signin.Options{
 		Auth:     authenticator,
 		Sessions: sessions,
-		Store:    store.New(pool),
+		Store:    queries,
 		Logger:   logger,
 		Origin:   cfg.Origin,
 		Nav:      nav,
+	})
+	accounts.Routes(r)
+
+	// The slate and the submit form: the two pages that read and write the
+	// season. The gate is handed over rather than reached for, so that the
+	// board depends on the shape of the whitelist check and not on the
+	// service that owns it.
+	board.New(board.Options{
+		Store:         queries,
+		DB:            pool,
+		Sessions:      sessions,
+		RequireMember: accounts.RequireMember,
+		SignInHref:    authenticator.LoginPath(),
+		Logger:        logger,
+		Origin:        cfg.Origin,
+		Nav:           nav,
 	}).Routes(r)
 
 	// The HTML pages and /static/. Origin is only used to build absolute URLs

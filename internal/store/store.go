@@ -51,11 +51,17 @@ type (
 	GetSeasonMemberParams           = sqlc.GetSeasonMemberParams
 	ListPersonMoviesForSeasonParams = sqlc.ListPersonMoviesForSeasonParams
 	ListSeasonMembersRow            = sqlc.ListSeasonMembersRow
-	SetMovieHiddenParams            = sqlc.SetMovieHiddenParams
-	UpdateMovieParams               = sqlc.UpdateMovieParams
-	UpdatePersonIdentityParams      = sqlc.UpdatePersonIdentityParams
-	UpdateSeasonStateParams         = sqlc.UpdateSeasonStateParams
-	UpdateSeasonWindowsParams       = sqlc.UpdateSeasonWindowsParams
-	UpsertPersonOnSignInParams      = sqlc.UpsertPersonOnSignInParams
-	UpsertSeasonMemberParams        = sqlc.UpsertSeasonMemberParams
+	LockSubmitLimitForUpdateParams  = sqlc.LockSubmitLimitForUpdateParams
+
+	// ListVisibleMoviesWithSubmitterForSeasonRow is a slate row: the movie
+	// plus the display name to credit it to.
+	ListVisibleMoviesWithSubmitterForSeasonRow = sqlc.ListVisibleMoviesWithSubmitterForSeasonRow
+
+	SetMovieHiddenParams       = sqlc.SetMovieHiddenParams
+	UpdateMovieParams          = sqlc.UpdateMovieParams
+	UpdatePersonIdentityParams = sqlc.UpdatePersonIdentityParams
+	UpdateSeasonStateParams    = sqlc.UpdateSeasonStateParams
+	UpdateSeasonWindowsParams  = sqlc.UpdateSeasonWindowsParams
+	UpsertPersonOnSignInParams = sqlc.UpsertPersonOnSignInParams
+	UpsertSeasonMemberParams   = sqlc.UpsertSeasonMemberParams
 )

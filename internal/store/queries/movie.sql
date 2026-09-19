@@ -74,3 +74,32 @@ UPDATE movie
 SET hidden = sqlc.arg(hidden)
 WHERE id = sqlc.arg(id)
 RETURNING *;
+
+-- name: ListVisibleMoviesWithSubmitterForSeason :many
+-- The slate as a page renders it: every live submission, with the name to
+-- credit it to.
+--
+-- ListVisibleMoviesForSeason returns the same rows without the join and stays
+-- as it is -- the tally has no use for a display name. This one exists because
+-- the only alternative on the page side is a person lookup per card.
+--
+-- An INNER JOIN is safe here, and that is a property of the schema rather than
+-- an assumption: movie.submitted_by is NOT NULL and ON DELETE RESTRICT against
+-- person, so the submitter row cannot be missing and the join cannot silently
+-- drop a film off the slate.
+--
+-- Joined to person and deliberately NOT to season_member. Someone removed from
+-- the season keeps their films on the slate (see DeleteSeasonMember), and
+-- joining through the roster would make those films lose their name -- or,
+-- inner-joined, vanish.
+--
+-- display_name may be '': a whitelisted person who has never signed in has no
+-- name at all. That blank is the page's to handle (MovieCard.SubmitterLabel),
+-- not this query's to paper over -- substituting the email here would put an
+-- address on a public page.
+SELECT sqlc.embed(movie), person.display_name
+FROM movie
+JOIN person ON person.id = movie.submitted_by
+WHERE movie.season_id = $1
+  AND NOT movie.hidden
+ORDER BY movie.created_at, movie.id;
