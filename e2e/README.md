@@ -106,6 +106,44 @@ it honest: when nap-9jw mounts the route, that test goes red, and the failure
 is the instruction — delete it, unskip the journey, and the global setup starts
 saving a real session instead of an empty one.
 
+### This was verified, not assumed
+
+The sign-in path above could not run against `beads-setup`, so it was run
+against `agent/builder-2`, which carries C3 and C4, on a throwaway merge. No
+code changed; the branch behaved exactly as designed:
+
+```
+e2e: /auth/login returned 302 - signing in for real
+e2e: signed in as e2e-voter@example.test, 1 cookie(s) saved
+✘ sign-in › is not mounted yet - delete this test when nap-9jw lands
+    Expected: 404
+    Received: 302
+✓ sign-in › through the mock provider establishes a session   (both projects)
+```
+
+The trip-wire went red with the right reason, the global setup drove the real
+flow and saved a session, and the journey beneath it unskipped itself and
+passed. What is written here for a world that does not exist yet has been run
+in one that does.
+
+### The dev provider's consent screen
+
+nap-bml adds a click-through identity picker to the provider for `make dev`.
+It intercepts the authorize endpoint, so two things follow for tests:
+
+- **Queue an identity before driving a flow.** A queued user tells the picker
+  the caller is a test rather than a browser waiting to choose, and it
+  delegates straight through. `oidc-provider.spec.ts`'s PKCE test queues one
+  for exactly this reason even though it does not care who signs in.
+- **`rejects an authorize request from an unknown client` is a specification,
+  not a convenience.** It deliberately queues nobody. A picker that renders its
+  list before mockoidc has validated `client_id`, `response_type`, `scope` and
+  the PKCE method turns a misconfigured `OAUTH_CLIENT_ID` into a friendly page
+  with a list of people on it; the developer clicks one and the failure
+  surfaces later and somewhere else. Google refuses an unknown client, so the
+  mock must too. This test currently fails against `agent/builder-2`
+  (`Expected: >= 400 / Received: 200`) and that failure is the finding.
+
 ## Adding a test for a page that has just landed
 
 1. Delete the `test.skip(true, ...)` line.

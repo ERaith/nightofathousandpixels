@@ -124,6 +124,12 @@ test.describe("the OIDC provider", () => {
     const { challenge } = pkce();
     const state = randomToken();
 
+    // Queueing an identity is not incidental. The dev stack's provider grows a
+    // click-through consent screen (nap-bml), and a queued user is what tells
+    // it this caller is a test rather than a browser waiting to choose. This
+    // test is about PKCE, not about who signs in, so it says so explicitly
+    // instead of depending on which provider build it is pointed at.
+    await queueUser(user);
     await page.goto(authorizeURL(d, { redirectURI, state, nonce: randomToken(), challenge }));
     const code = new URL(page.url()).searchParams.get("code");
     expect(code).toBeTruthy();
@@ -135,6 +141,16 @@ test.describe("the OIDC provider", () => {
   });
 
   test("rejects an authorize request from an unknown client", async ({ request }) => {
+    // This one deliberately queues nobody, and it is a specification rather
+    // than a convenience: an authorize request the provider should refuse must
+    // be refused BEFORE anything renders a page.
+    //
+    // It matters most for the dev stack's consent screen (nap-bml). A picker
+    // that renders its identity list before mockoidc has validated client_id,
+    // response_type, scope and the PKCE method turns a misconfigured
+    // OAUTH_CLIENT_ID into a friendly page with a list of people on it. The
+    // developer clicks one, and the failure surfaces later and somewhere else.
+    // Google answers an unknown client with an error, so the mock must too.
     const d = await discovery();
     const url = new URL(d.authorization_endpoint);
     url.searchParams.set("client_id", "not-the-configured-client");
