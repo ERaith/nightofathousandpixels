@@ -1,0 +1,1173 @@
+/* ==========================================================================
+   Night of a Thousand Pixels — base stylesheet
+   ==========================================================================
+
+   LOAD-ORDER CONTRACT (this is the whole point of this file)
+
+     <link rel="stylesheet" href="/static/css/pack.css">   <- theme pack FIRST
+     <link rel="stylesheet" href="/static/css/base.css">   <- base LAST
+
+   A theme pack owns colours, fonts, copy and assets. It expresses all of
+   that as CSS custom properties on :root (see themes/README.md). It does
+   NOT own layout, and it does NOT own accessibility.
+
+   A pack cannot opt out of being usable. That is deliberate, and it rests
+   on two things rather than on load order:
+
+     - `@layer nap-enforce` holds every accessibility floor. For !important
+       declarations the cascade reverses, so a layered important beats an
+       unlayered one at ANY specificity. Loading second is not enough on its
+       own: it only beats equal-or-lower specificity, and plain !important
+       is not enough either, because a pack's important rule at higher
+       specificity still wins.
+     - Each floor is `max(<literal>, var(--token))`, so winning the cascade
+       with a poisoned token wins nothing. A pack may raise a floor, never
+       lower it.
+
+   A pack that tries to turn off a focus ring, shrink a tap target below
+   44px, drop body text under 16px, shrink the root font size, or re-enable
+   motion for someone who asked for less loses to this file every time.
+
+   RULES FOR PACK AUTHORS
+     - Set the public tokens listed in section 1 on :root. Nothing else.
+     - Never set a --_ prefixed token. They are private to this file. You
+       CAN set one — they are ordinary custom properties — but the floors
+       are written to ignore a smaller value, so the only effect is that
+       your pack and the rendered page disagree.
+     - Never write layout (display/grid/flex/position/width/margin),
+       :focus / :focus-visible, or @media (prefers-reduced-motion) rules.
+     - --accent must reach 4.5:1 against BOTH --bg and --surface.
+       themes/check-contrast.py will tell you if it does.
+
+   CONTENTS
+     1. Tokens (public contract -> private layer)
+     2. Reset
+     3. Document + typography
+     4. Accessibility primitives (skip link, focus, visually-hidden)
+     5. Layout (header, shell, container, measure, footer)
+     6. Components (cards, grid, badges, race bars, notices, tables)
+     7. Forms
+     8. Buttons
+     9. Utilities
+    10. prefers-reduced-motion   (enforced, @layer nap-enforce)
+    11. forced-colors           (enforced)
+
+   Everything in @layer nap-enforce is the accessibility floor. It is spread
+   through the file so each rule sits with the code it guards; the layer is
+   what makes it non-negotiable, not where it appears.
+
+   Plain CSS. No build step, no preprocessor, no npm.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. TOKENS
+   --------------------------------------------------------------------------
+   The public half is the contract with theme packs. Every one has a
+   fallback baked in, so the site renders and stays readable with NO pack
+   loaded at all — that fallback palette is itself contrast-checked.
+
+   The private half (--_name) is what the rest of this file actually uses.
+   Packs cannot influence it except through the eight public tokens.
+   ========================================================================== */
+
+:root {
+  /* -- PUBLIC: a pack may set these ------------------------------------- */
+  /* --bg           page background                                        */
+  /* --surface      raised background: cards, inputs, table heads          */
+  /* --accent       primary action colour; 4.5:1 vs --bg AND --surface     */
+  /* --accent-alt   secondary accent, non-text use; >= 3:1 vs --bg         */
+  /* --text         body text on --bg and on --surface; >= 4.5:1 vs both   */
+  /* --muted        de-emphasised text; still >= 4.5:1 vs --bg/--surface   */
+  /* --font-display headings and the site wordmark                         */
+  /* --font-body    everything else                                        */
+  /* Optional, decorative only: --border --shadow --radius --color-scheme  */
+  /* --backdrop (a background-image layer painted behind the page).        */
+
+  /* -- PRIVATE: resolved once here, used everywhere below ---------------- */
+  --_bg: var(--bg, #101219);
+  --_surface: var(--surface, #1b1e29);
+  --_accent: var(--accent, #7cc4ff);
+  --_accent-alt: var(--accent-alt, #ffc46b);
+  --_text: var(--text, #f4f5f9);
+  --_muted: var(--muted, #aab2c6);
+
+  --_font-display: var(--font-display, var(--font-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif));
+  --_font-body: var(--font-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+  --_font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --_border: var(--border, #636d90);
+  --_radius: var(--radius, 10px);
+  --_shadow: var(--shadow, 0 1px 2px rgb(0 0 0 / 0.30), 0 8px 24px rgb(0 0 0 / 0.22));
+
+  /* Text drawn ON TOP of --accent. Using the page background for this is
+     not a shortcut: the pack already guarantees accent:bg >= 4.5:1, so the
+     inverse pairing inherits that same ratio for free. One contrast rule
+     buys accent-on-bg links and bg-on-accent buttons at the same time. */
+  --_on-accent: var(--_bg);
+
+  /* Focus. Deliberately NOT a public token — see section 4. */
+  --_focus: var(--_accent);
+  --_focus-width: 3px;
+  --_focus-offset: 2px;
+
+  /* Status colours are base-owned: a pack does not get to make an error
+     message unreadable. These are fixed and contrast-checked against both
+     the fallback palette and a white background. */
+  --_ok: #3fb950;
+  --_warn: #d29922;
+  --_danger: #ff7b72;
+
+  /* Spacing, measure, geometry — base-owned. */
+  --_sp-1: 0.25rem;
+  --_sp-2: 0.5rem;
+  --_sp-3: 0.75rem;
+  --_sp-4: 1rem;
+  --_sp-5: 1.5rem;
+  --_sp-6: 2rem;
+  --_sp-7: 3rem;
+
+  --_gutter: 1rem;          /* 16px each side; 320px screen -> 288px of content */
+  --_measure: 65ch;         /* readable column */
+  --_wide: 72rem;           /* outer shell */
+  --_tap: 44px;             /* minimum interactive target, WCAG 2.5.5 */
+
+  /* Never below 1rem. The clamp floor is the accessibility floor. */
+  --_fs-body: clamp(1rem, 0.96rem + 0.2vw, 1.125rem);
+  --_fs-lead: clamp(1.125rem, 1.05rem + 0.35vw, 1.3rem);
+  --_fs-h1: clamp(1.9rem, 1.4rem + 2.4vw, 3rem);
+  --_fs-h2: clamp(1.5rem, 1.25rem + 1.2vw, 2.1rem);
+  --_fs-h3: clamp(1.25rem, 1.15rem + 0.5vw, 1.5rem);
+
+  --_speed: 140ms;
+  --_ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  color-scheme: var(--color-scheme, dark);
+}
+
+
+/* ==========================================================================
+   2. RESET
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body,
+h1, h2, h3, h4, h5, h6,
+p, figure, blockquote, dl, dd,
+fieldset, legend {
+  margin: 0;
+}
+
+ul[class],
+ol[class] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Anything that can carry a long unbroken string — a movie title someone
+   pasted, a trailer URL, an email address — must not be able to push the
+   page sideways. This is half of the 320px no-horizontal-scroll promise. */
+img,
+picture,
+video,
+canvas,
+svg,
+iframe,
+embed,
+object {
+  display: block;
+  max-inline-size: 100%;
+}
+
+img,
+video {
+  block-size: auto;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+}
+
+table {
+  border-collapse: collapse;
+  inline-size: 100%;
+}
+
+:target {
+  scroll-margin-block-start: var(--_sp-6);
+}
+
+
+/* ==========================================================================
+   3. DOCUMENT + TYPOGRAPHY
+   ========================================================================== */
+
+html {
+  font-size: 100%;                 /* floored in @layer nap-enforce */
+  -webkit-text-size-adjust: 100%;
+  block-size: 100%;
+}
+
+body {
+  min-block-size: 100%;
+  margin: 0;
+  background-color: var(--_bg);
+  color: var(--_text);
+  font-family: var(--_font-body);
+  font-size: var(--_fs-body);      /* floored in @layer nap-enforce */
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  display: flex;
+  flex-direction: column;
+}
+
+/* A pack may paint a decorative backdrop here. It sits behind everything,
+   is never interactive, and is pinned so it cannot create scroll. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--backdrop, none);
+  background-size: cover;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--_font-display);
+  line-height: 1.15;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+}
+
+h1 { font-size: var(--_fs-h1); letter-spacing: -0.01em; }
+h2 { font-size: var(--_fs-h2); }
+h3 { font-size: var(--_fs-h3); }
+h4, h5, h6 { font-size: 1.0625rem; }
+
+p,
+ul, ol, dl,
+blockquote, figure, pre, table {
+  margin-block: 0 var(--_sp-4);
+}
+
+h1, h2, h3 {
+  margin-block: var(--_sp-6) var(--_sp-3);
+}
+
+:is(h1, h2, h3):first-child {
+  margin-block-start: 0;
+}
+
+p {
+  text-wrap: pretty;
+  overflow-wrap: break-word;
+}
+
+.lead {
+  font-size: var(--_fs-lead);
+  color: var(--_muted);
+}
+
+.muted {
+  color: var(--_muted);
+}
+
+/* Small print is still body text. 1rem is the floor, everywhere. */
+small,
+.meta {
+  font-size: 1rem;
+  color: var(--_muted);
+}
+
+a {
+  color: var(--_accent);
+  text-decoration-thickness: max(1px, 0.06em);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  text-decoration-thickness: max(2px, 0.1em);
+}
+
+/* Inline links inside running text keep their underline: colour alone is
+   never the only signal. WCAG 1.4.1. */
+.prose a,
+p a,
+li a {
+  text-decoration: underline;
+}
+
+code, kbd, samp, pre {
+  font-family: var(--_font-mono);
+  font-size: 1rem;
+}
+
+pre {
+  overflow-x: auto;
+  padding: var(--_sp-3);
+  background: var(--_surface);
+  border-radius: var(--_radius);
+}
+
+hr {
+  border: 0;
+  border-block-start: 1px solid var(--_border);
+  margin-block: var(--_sp-6);
+}
+
+
+/* ==========================================================================
+   4. ACCESSIBILITY PRIMITIVES
+   --------------------------------------------------------------------------
+   Enforced here, never in a pack. The !important flags in this section are
+   load-bearing: they are what stops a pack from writing `outline: none`.
+   ========================================================================== */
+
+/* Every interactive element gets a visible ring. This is the catch-all, so
+   it covers elements added later by templates nobody has written yet. */@layer nap-enforce {
+
+  :focus-visible {
+    outline: var(--_focus-width) solid var(--_focus) !important;
+    outline-offset: var(--_focus-offset) !important;
+  }
+}
+
+/* The one sanctioned use of `outline: none`: mouse/touch focus only.
+   Keyboard focus still hits the :focus-visible rule above. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Belt and braces for the elements a pack is most likely to restyle. */
+@layer nap-enforce {
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible {
+    outline: var(--_focus-width) solid var(--_focus) !important;
+    outline-offset: var(--_focus-offset) !important;
+  }
+}
+
+/* First thing in the tab order; visible the moment it is focused. */
+.skip-link {
+  position: absolute;
+  inset-block-start: var(--_sp-2);
+  inset-inline-start: var(--_sp-2);
+  z-index: 100;
+  padding: var(--_sp-3) var(--_sp-4);
+  min-block-size: var(--_tap);
+  display: inline-flex;
+  align-items: center;
+  background: var(--_accent);
+  color: var(--_on-accent);
+  border-radius: var(--_radius);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--_sp-4)));
+  transition: transform var(--_speed) var(--_ease);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.visually-hidden:not(:focus):not(:active) {
+  clip-path: inset(50%);
+  block-size: 1px;
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
+/* Minimum target size, WCAG 2.5.5 AAA / 2.5.8 AA. Applied to controls
+   rather than to inline prose links, which the spec exempts. */
+@layer nap-enforce {
+  .btn,
+  button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  select,
+  summary,
+  .nav a,
+  .tap {
+    min-block-size: max(44px, var(--_tap)) !important;
+    min-inline-size: max(44px, var(--_tap)) !important;
+  }
+}
+
+/* Text inputs get the same height for a consistent, thumb-friendly form. */
+@layer nap-enforce {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea {
+    min-block-size: max(44px, var(--_tap)) !important;
+  }
+}
+
+
+/* --------------------------------------------------------------------------
+   The floors, gathered. Two separate things defeat a floor, and each needs
+   its own answer:
+
+   1. THE CASCADE. Loading second only beats equal-or-lower specificity, so a
+      pack needs no !important at all to win — `html body { font-size: 9px }`
+      is enough, and that is exactly how the first version of this file lost
+      both floors. !important alone is not enough either: a pack's important
+      declaration at higher specificity still wins. What does hold is the
+      layer. For important declarations the cascade reverses, and a layered
+      important beats an unlayered one at ANY specificity. Everything in
+      `@layer nap-enforce` therefore wins against any pack that does not
+      itself use @layer.
+
+   2. THE VALUE. A floor written as `var(--_tap)` resolves to whatever --_tap
+      says, and a pack can set `html body { --_tap: 8px }` on a descendant.
+      Winning the cascade with a poisoned number wins nothing, so every floor
+      below is `max(<literal>, var(--token))`: a pack may raise a floor, never
+      lower it.
+
+   Do not consume --_tap or --_fs-body bare in a rule that is meant to be a
+   floor; wrap it in max() as below.
+   -------------------------------------------------------------------------- */
+
+@layer nap-enforce {
+  /* What 1rem means. A pack winning this drags every rem-based size down
+     with it, and `html:root { font-size: 4px }` beats a plain `html` rule on
+     specificity. 100% is the reader's own browser setting, so this floors
+     packs, not people. */
+  html {
+    font-size: 100% !important;
+  }
+
+  /* Body text: 1rem, never less. */
+  body {
+    font-size: max(1rem, var(--_fs-body)) !important;
+  }
+
+  /* Small print is still body text. */
+  small,
+  .meta,
+  .field__hint {
+    font-size: 1rem !important;
+  }
+
+  /* Controls that are their own tap target but are styled elsewhere. */
+  .skip-link,
+  .wordmark,
+  .check {
+    min-block-size: max(44px, var(--_tap)) !important;
+  }
+}
+
+
+/* ==========================================================================
+   5. LAYOUT
+   --------------------------------------------------------------------------
+   Mobile-first throughout. Most of the thirty-odd people voting are on a
+   phone, so the narrow case is the default case and the wide case is the
+   media query, not the other way round.
+   ========================================================================== */
+
+.container {
+  inline-size: 100%;
+  max-inline-size: var(--_wide);
+  margin-inline: auto;
+  padding-inline: var(--_gutter);
+}
+
+/* The readable column: roughly 65 characters. Anything that is text to be
+   read — page copy, a form, a submission description — belongs in here.
+
+   It caps width but keeps the container's start edge rather than centring,
+   so a text block and the full-width card grid above it share one left
+   edge instead of jogging against each other. Add .centered for a page
+   that is nothing but a column (the sign-in page, say). */
+.measure,
+.prose {
+  inline-size: 100%;
+  max-inline-size: var(--_measure);
+}
+
+.centered {
+  margin-inline: auto;
+}
+
+.site-header {
+  border-block-end: 1px solid var(--_border);
+  background: var(--_surface);
+}
+
+.site-header__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-3);
+  padding-block: var(--_sp-4);
+}
+
+.site-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--_sp-3);
+  flex-wrap: wrap;
+  min-block-size: var(--_tap);
+}
+
+.wordmark {
+  font-family: var(--_font-display);
+  font-size: clamp(1.25rem, 1.05rem + 1vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--_text);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--_tap);
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--_sp-1) var(--_sp-4);
+}
+
+.nav a {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--_sp-2);
+  border-radius: var(--_radius);
+  text-decoration: none;
+  color: var(--_text);
+}
+
+.nav a:hover {
+  text-decoration: underline;
+}
+
+.nav a[aria-current="page"] {
+  color: var(--_accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+.site-main {
+  flex: 1 0 auto;
+  padding-block: var(--_sp-6) var(--_sp-7);
+}
+
+.site-footer {
+  border-block-start: 1px solid var(--_border);
+  padding-block: var(--_sp-5);
+  color: var(--_muted);
+}
+
+.stack > * + * {
+  margin-block-start: var(--_sp-4);
+}
+
+.stack-lg > * + * {
+  margin-block-start: var(--_sp-6);
+}
+
+.cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--_sp-3);
+}
+
+.page-head {
+  margin-block-end: var(--_sp-6);
+}
+
+@media (min-width: 40em) {
+  :root {
+    --_gutter: 1.5rem;
+  }
+
+  .site-header__inner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--_sp-5);
+  }
+}
+
+
+/* ==========================================================================
+   6. COMPONENTS
+   ========================================================================== */
+
+/* -- The movie slate -------------------------------------------------------
+   min() is what keeps 320px honest: the track can never demand more than
+   the container has, so the grid collapses to one column instead of
+   overflowing. */
+.card-grid {
+  display: grid;
+  gap: var(--_sp-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-3);
+  padding: var(--_sp-4);
+  background: var(--_surface);
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  box-shadow: var(--_shadow);
+  min-inline-size: 0;              /* let flex/grid children shrink */
+}
+
+.card__media {
+  aspect-ratio: 16 / 9;
+  inline-size: 100%;
+  overflow: hidden;
+  border-radius: calc(var(--_radius) - 2px);
+  background: var(--_bg);
+}
+
+.card__media > * {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  border: 0;
+}
+
+.card__title {
+  font-size: var(--_fs-h3);
+  margin: 0;
+  overflow-wrap: anywhere;         /* long titles wrap instead of overflow */
+}
+
+.card__meta {
+  color: var(--_muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--_sp-1) var(--_sp-3);
+  margin: 0;
+}
+
+.card__body {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Actions sit on the bottom edge so cards of different heights line up. */
+.card__actions {
+  margin-block-start: auto;
+  padding-block-start: var(--_sp-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--_sp-2);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--_sp-1);
+  padding: var(--_sp-1) var(--_sp-3);
+  font-size: 1rem;
+  line-height: 1.3;
+  border: 1px solid var(--_border);
+  border-radius: 999px;
+  color: var(--_text);
+  background: var(--_bg);
+  white-space: nowrap;
+}
+
+.badge--accent {
+  border-color: var(--_accent);
+  color: var(--_accent);
+}
+
+/* -- Voting race ----------------------------------------------------------
+   The bar is decoration; the number beside it is the accessible answer.
+   Always render the count in text, never bar-only. */
+.race {
+  display: grid;
+  gap: var(--_sp-4);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.race__label {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--_sp-2);
+  margin-block-end: var(--_sp-2);
+}
+
+.race__track {
+  block-size: 0.75rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--_bg);
+  background: color-mix(in srgb, var(--_text) 16%, var(--_bg));
+  border: 1px solid var(--_border);
+}
+
+.race__fill {
+  display: block;
+  block-size: 100%;
+  inline-size: 0;
+  background: var(--_accent);
+  transition: inline-size var(--_speed) var(--_ease);
+}
+
+/* -- Notices --------------------------------------------------------------
+   Colour is a second signal only; the template must carry the word
+   ("Error:", "Saved.") and role="alert"/"status" as the first one. */
+.notice {
+  display: flex;
+  gap: var(--_sp-3);
+  padding: var(--_sp-3) var(--_sp-4);
+  border: 1px solid var(--_border);
+  border-inline-start: 4px solid var(--_muted);
+  border-radius: var(--_radius);
+  background: var(--_surface);
+}
+
+.notice--ok     { border-inline-start-color: var(--_ok); }
+.notice--warn   { border-inline-start-color: var(--_warn); }
+.notice--error  { border-inline-start-color: var(--_danger); }
+
+.empty {
+  padding: var(--_sp-6) var(--_sp-4);
+  text-align: center;
+  color: var(--_muted);
+  border: 1px dashed var(--_border);
+  border-radius: var(--_radius);
+}
+
+.countdown {
+  font-family: var(--_font-display);
+  font-size: var(--_fs-h2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+/* -- Tables (admin) -------------------------------------------------------
+   A wide table scrolls inside its own wrapper. The PAGE never scrolls
+   sideways — that is the rule, and this is the escape hatch that honours
+   it. Give the wrapper tabindex="0" and a label so it is reachable by
+   keyboard when it does scroll. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+}
+
+.table-scroll > table {
+  margin: 0;
+  min-inline-size: 36rem;
+}
+
+th, td {
+  padding: var(--_sp-3);
+  text-align: start;
+  border-block-end: 1px solid var(--_border);
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--_surface);
+  font-family: var(--_font-display);
+  position: sticky;
+  inset-block-start: 0;
+}
+
+tbody tr:last-child :is(th, td) {
+  border-block-end: 0;
+}
+
+
+/* ==========================================================================
+   7. FORMS
+   ========================================================================== */
+
+form {
+  margin: 0;
+}
+
+fieldset {
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  padding: var(--_sp-4);
+}
+
+legend {
+  padding-inline: var(--_sp-2);
+  font-family: var(--_font-display);
+  font-size: var(--_fs-h3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-2);
+  margin-block-end: var(--_sp-5);
+}
+
+.field > label,
+.label {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.field__hint {
+  color: var(--_muted);
+  font-size: 1rem;
+}
+
+.field__error {
+  color: var(--_danger);
+  font-weight: 600;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+select,
+textarea {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  padding: var(--_sp-3);
+  /* 16px minimum stops iOS Safari zooming the viewport on focus, which on
+     a phone reads to the user as the page breaking. */
+  font-size: max(1rem, 1em);
+  color: var(--_text);
+  background: var(--_surface);
+  border: 1px solid var(--_border);
+  /* A control's boundary is what identifies it as a control, so it has to
+     clear 3:1 (WCAG 1.4.11) whatever the pack set --border to. Mixing the
+     pack's own text colour toward its own background inherits the
+     already-guaranteed text:bg contrast and lands well above the floor.
+
+     Without color-mix() this does NOT fall back to the `border: ... var(--_border)`
+     line above. Because the value contains var(), it is invalid at computed-value
+     time rather than dropped at parse time, so the earlier border-color is thrown
+     away and this computes to `unset` — which for border-color means currentColor.
+     That lands on --_text, so the result is higher contrast than intended rather
+     than lower, but it is luck, not design: move the `color:` declaration above
+     out of this rule and the safety goes with it. */
+  border-color: color-mix(in srgb, var(--_text) 45%, var(--_bg));
+  border-radius: var(--_radius);
+  transition: border-color var(--_speed) var(--_ease);
+}
+
+textarea {
+  min-block-size: 8rem;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--_muted);
+}
+
+/* Invalid styling only after the user has had a go at the field. */
+input:user-invalid,
+select:user-invalid,
+textarea:user-invalid,
+[aria-invalid="true"] {
+  border-color: var(--_danger);
+  border-inline-start-width: 4px;
+}
+
+::placeholder {
+  color: var(--_muted);
+  opacity: 1;
+}
+
+/* Checkbox and radio: the control itself stays its native size, but the
+   whole label is a 44px target. */
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--_sp-3);
+  min-block-size: var(--_tap);
+  cursor: pointer;
+}
+
+.check input[type="checkbox"],
+.check input[type="radio"] {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  flex: 0 0 auto;
+  accent-color: var(--_accent);
+  margin: 0;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--_sp-3);
+  margin-block-start: var(--_sp-5);
+}
+
+/* Full-width buttons on a phone, natural width once there is room. */
+.form-actions > .btn {
+  inline-size: 100%;
+}
+
+@media (min-width: 30em) {
+  .form-actions > .btn {
+    inline-size: auto;
+  }
+}
+
+
+/* ==========================================================================
+   8. BUTTONS
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--_sp-2);
+  padding: var(--_sp-3) var(--_sp-5);
+  font-family: var(--_font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  border: 2px solid var(--_border);
+  border-color: color-mix(in srgb, var(--_text) 45%, var(--_bg));
+  border-radius: var(--_radius);
+  background: var(--_surface);
+  color: var(--_text);
+  cursor: pointer;
+  transition: background-color var(--_speed) var(--_ease),
+              border-color var(--_speed) var(--_ease),
+              color var(--_speed) var(--_ease);
+}
+
+.btn:hover {
+  border-color: var(--_accent);
+}
+
+/* accent background + page background as the text colour. The pack's one
+   contrast guarantee (accent vs bg >= 4.5:1) carries this pairing. */
+.btn--primary {
+  background: var(--_accent);
+  color: var(--_on-accent);
+  border-color: var(--_accent);
+}
+
+.btn--primary:hover {
+  background: color-mix(in srgb, var(--_accent) 86%, var(--_text));
+  border-color: color-mix(in srgb, var(--_accent) 86%, var(--_text));
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--_accent);
+  border-color: var(--_accent);
+}
+
+.btn--danger {
+  background: transparent;
+  color: var(--_danger);
+  border-color: var(--_danger);
+}
+
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* A voted-for card's button is not distinguished by colour alone; the
+   template must also flip its text ("Voted") and aria-pressed. */
+.btn[aria-pressed="true"] {
+  background: var(--_accent);
+  color: var(--_on-accent);
+  border-color: var(--_accent);
+}
+
+
+/* ==========================================================================
+   9. UTILITIES
+   ========================================================================== */
+
+.text-center { text-align: center; }
+.nowrap      { white-space: nowrap; }
+.break       { overflow-wrap: anywhere; }
+.full        { inline-size: 100%; }
+.mt-0        { margin-block-start: 0; }
+.mb-0        { margin-block-end: 0; }
+.hidden      { display: none !important; }
+
+
+/* ==========================================================================
+   10. REDUCED MOTION — ENFORCED
+   --------------------------------------------------------------------------
+   Last block but one, everything !important, and applied to the universal
+   selector including generated content. A theme pack loads before this
+   file, so whatever it animates — a pulsing backdrop, a scanline sweep,
+   an auto-playing hero — is switched off here for anyone whose operating
+   system says they want less motion.
+
+   Durations are 0.01ms rather than 0 so that transitionend/animationend
+   still fire and any JS waiting on them does not hang.
+   ========================================================================== */
+
+@layer nap-enforce {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+      /* parallax and fixed-attachment backgrounds read as motion too */
+      background-attachment: initial !important;
+    }
+
+    html,
+    body {
+      scroll-behavior: auto !important;
+    }
+
+    /* Anything a pack pinned behind the page stops moving as well. */
+    body::before,
+    body::after {
+      animation: none !important;
+      transition: none !important;
+    }
+
+    /* The skip link still needs to arrive; it just arrives instantly. */
+    .skip-link {
+      transition: none !important;
+    }
+
+    /* Templates: put autoplaying video/GIF heroes in .motion-only and they
+       disappear for these users instead of looping at them. */
+    .motion-only {
+      display: none !important;
+    }
+  }
+}
+
+
+/* ==========================================================================
+   11. FORCED COLORS / HIGH CONTRAST — ENFORCED
+   --------------------------------------------------------------------------
+   Windows high-contrast mode replaces the palette wholesale. Borders that
+   were doing the work of separating things vanish unless they are told to
+   use a system colour, and a focus ring drawn in --accent disappears
+   entirely. Both are fixed here rather than left to a pack.
+   ========================================================================== */
+
+@media (forced-colors: active) {
+  /* This selector list mirrors section 4 exactly. It has to: the element-
+     qualified rules up there (button:focus-visible and friends) out-specify
+     a bare :focus-visible, so a short rule here would silently lose. */
+  :focus-visible,
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible {
+    outline: var(--_focus-width) solid Highlight !important;
+    outline-offset: var(--_focus-offset) !important;
+  }
+
+  .btn,
+  .card,
+  .badge,
+  .notice,
+  input,
+  select,
+  textarea,
+  .table-scroll {
+    border: 1px solid ButtonBorder;
+  }
+
+  .btn--primary,
+  .btn[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+
+  .race__fill {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}
+
+
+/* ==========================================================================
+   12. PRINT
+   --------------------------------------------------------------------------
+   Someone will print the slate to argue about it over a beer.
+   ========================================================================== */
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  body::before,
+  .site-header,
+  .site-footer,
+  .btn,
+  .skip-link {
+    display: none !important;
+  }
+
+  .card {
+    border: 1px solid #999;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.9em;
+  }
+}

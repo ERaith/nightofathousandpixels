@@ -64,3 +64,7 @@ bin/
 tmp/
 # `go build ./...` drops a main package's binary in the working directory
 /server
+
+# python bytecode
+__pycache__/
+*.pyc

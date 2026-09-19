@@ -3,10 +3,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,9 +14,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ERaith/nightofathousandpixels/internal/config"
+	"github.com/ERaith/nightofathousandpixels/internal/web"
+	"github.com/ERaith/nightofathousandpixels/internal/web/health"
+	"github.com/ERaith/nightofathousandpixels/internal/web/middleware"
 )
 
 // Server-side timeouts. Without these an http.Server has none at all, so a
@@ -47,6 +50,8 @@ const (
 
 func main() {
 	if err := run(); err != nil {
+		// Configuration can fail before there is a logger to fail into, so
+		// this one path stays on the standard logger.
 		log.Fatalf("server: %v", err)
 	}
 }
@@ -57,12 +62,24 @@ func run() error {
 		return err
 	}
 
+	logger := middleware.NewLogger(cfg.LogLevel)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// pgxpool.New does not dial here: connections are opened on first use. A
+	// database that is down at boot must not stop the process from starting,
+	// because a process that refuses to start cannot serve the 503 that tells
+	// the monitor what is wrong.
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           newRouter(),
+		Handler:           newRouter(cfg, logger, pool),
 		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
 		WriteTimeout:      writeTimeout,
@@ -73,7 +90,11 @@ func run() error {
 	// expected one after Shutdown, so it is normalised to nil here.
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("listening on %s", srv.Addr)
+		logger.Info("listening",
+			slog.String("addr", srv.Addr),
+			slog.Int("trusted_proxy_count", cfg.TrustedProxyCount),
+			slog.String("log_level", cfg.LogLevel.String()),
+		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return
@@ -90,34 +111,30 @@ func run() error {
 		stop()
 	}
 
-	log.Printf("shutdown signal received, draining for up to %s", shutdownTimeout)
+	logger.Info("shutdown signal received", slog.Duration("drain_timeout", shutdownTimeout))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 
-	log.Print("shutdown complete")
+	logger.Info("shutdown complete")
 	return <-serveErr
 }
 
-func newRouter() http.Handler {
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http.Handler {
 	r := chi.NewRouter()
-	// Structured request logging replaces chi's stdlib logger in A5.
+	// Order is load-bearing; see the package comment on internal/web/middleware.
+	r.Use(middleware.ClientIPPolicy(cfg.TrustedProxyCount))
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Recoverer)
+	r.Use(middleware.Recoverer(logger))
+	r.Use(middleware.RequestLogger(logger))
 
-	r.Get("/healthz", handleHealthz)
+	r.Method(http.MethodGet, "/healthz", health.NewHandler(pool, logger))
+
+	// The HTML pages and /static/. Origin is only used to build absolute URLs
+	// for link previews; nothing here reads the database.
+	web.New(web.Options{Origin: cfg.Origin}).Routes(r)
 
 	return r
-}
-
-// handleHealthz reports process liveness. It deliberately checks nothing else:
-// the database-aware readiness check lands in A5.
-func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("healthz: write response: %v", err)
-	}
 }
