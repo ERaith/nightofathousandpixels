@@ -14,8 +14,9 @@
 import { expect, test } from "@playwright/test";
 import * as fs from "node:fs";
 
+import { stranger } from "../lib/people";
+import { signInAs } from "../lib/session";
 import { harnessStatePath, type HarnessState } from "../lib/stack";
-import { assertionsNotWrittenYet } from "../lib/unwritten";
 
 function harnessState(): HarnessState {
   return JSON.parse(fs.readFileSync(harnessStatePath, "utf8")) as HarnessState;
@@ -43,13 +44,36 @@ test.describe("sign-in", () => {
     expect(cookies.some((c) => c.httpOnly)).toBe(true);
   });
 
-  test("is refused for an address that is not on the season whitelist [skipped until nap-l1i]", async () => {
-    const reason = "nap-l1i: there is no whitelist check, and no page that reports being refused";
-    test.skip(true, reason);
+  test("succeeds for an address that is not on the season whitelist, and gets no further", async ({
+    page,
+    context,
+  }) => {
+    // nap-l1i has landed. The skip that stood here is gone rather than left to
+    // disable itself, for the same reason as the one above.
+    //
+    // The shape of this is the finding, not the refusal: sign-in SUCCEEDS.
+    // The provider vouches for the address, the person row is created, the
+    // session cookie is issued - and then a separate gate, in front of the
+    // pages that do something, says no. That is why somebody removed from the
+    // whitelist stops being able to act on their next click rather than when
+    // their cookie expires, and why the refusal page can greet them by name
+    // and offer them a way to sign out of the wrong Google account.
+    await signInAs(page, stranger);
 
-    // queueUser({ subject: "stranger", email: "not-invited@example.test" });
-    // await page.goto("/auth/login");
-    // await expect(page.getByText(/not on the list/i)).toBeVisible();
-    assertionsNotWrittenYet(reason);
+    const cookies = await context.cookies(page.url());
+    expect(cookies.length, "a refused visitor still gets a session").toBeGreaterThan(0);
+
+    await expect(page.getByRole("heading", { level: 1, name: "You're not on the list yet" })).toBeVisible();
+
+    // The address they arrived with, so somebody who signed in with the wrong
+    // Google account can see which one it was. It is also the address an admin
+    // needs, and the page says to send exactly it.
+    await expect(page.getByText(stranger.email, { exact: false }).first()).toBeVisible();
+
+    // Not a 403, on purpose. This is a friend who was never added, not an
+    // intruder, and there is something for them to do about it.
+    const again = await page.goto("/me");
+    expect(again?.status()).toBe(200);
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   });
 });

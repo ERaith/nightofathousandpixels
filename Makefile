@@ -539,9 +539,35 @@ e2e-install: ## Install the e2e suite's node dependencies and browsers
 e2e-up: ## Bring up the e2e stack: throwaway database, mock OIDC provider, app
 	$(COMPOSE_E2E) up -d --build --wait mockoidc postgres
 	$(COMPOSE_E2E) run --rm --build migrate
+	@$(MAKE) e2e-seed
 	$(COMPOSE_E2E) up -d --build --wait app
 	@echo "==> e2e app  http://localhost:$(TEST_APP_PORT)"
 	@echo "==> e2e oidc $(E2E_ISSUER_URL)"
+
+# A migrated database is an EMPTY database: no season, and nobody on a
+# whitelist. Every journey past the front page needs both, and without them the
+# suite would not fail in an interesting way - it would sign somebody in
+# successfully and then assert against "No season is open", which reads as a
+# broken page rather than as a missing fixture. (That is how this landed: the
+# e2e stack had no seed at all, so `/slate` served the empty board and `/submit`
+# refused everyone.)
+#
+# It runs on the host against the published port rather than as a container,
+# for the same reason `e2e-templ-fresh` does: the Go toolchain is already a
+# requirement of `make e2e`, and a seeder image would be a third thing to keep
+# in step with cmd/seed.
+#
+# DATABASE_URL is assigned per-recipe so that the dev database - which is very
+# likely running, with data somebody cares about, on a neighbouring port -
+# cannot be the one that gets written to. The seed is additive and idempotent,
+# so running it twice, or against a stack brought up by hand, changes nothing.
+#
+# SEED_EXTRA_MEMBERS is passed through from the environment: the browser suite
+# sets it from e2e/lib/people.ts, so the list of who signs in and the list of
+# who is whitelisted are one list.
+.PHONY: e2e-seed
+e2e-seed: ## Seed the e2e database: the season, the dev cast, and SEED_EXTRA_MEMBERS
+	@DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) run ./cmd/seed
 
 .PHONY: e2e-down
 e2e-down: ## Stop the e2e stack and erase its database

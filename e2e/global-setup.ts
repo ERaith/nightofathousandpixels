@@ -24,6 +24,7 @@ import {
   randomToken,
   waitFor,
 } from "./lib/oidc";
+import { seedExtraMembers } from "./lib/people";
 import { harnessStatePath, make, stack, storageStatePath, type HarnessState } from "./lib/stack";
 
 /** Where the application will mount sign-in, once ticket C3 wires it up. */
@@ -35,8 +36,18 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 
   console.log(`\ne2e: slot ${s.slot} - app ${s.baseURL}, issuer ${s.issuerURL}`);
 
+  // Who is on the season's whitelist, decided by lib/people.ts and applied by
+  // cmd/seed. It goes in the environment rather than on the command line
+  // because `make e2e-up` runs `make e2e-seed` for itself, and a variable set
+  // here reaches both.
+  process.env.SEED_EXTRA_MEMBERS = seedExtraMembers();
+
   if (process.env.E2E_SKIP_STACK === "1") {
+    // A stack somebody left up is still a stack that needs a season and a
+    // whitelist - and quite possibly one seeded by an older list. The seed is
+    // additive and idempotent, so saying so again costs nothing.
     console.log("e2e: E2E_SKIP_STACK=1, assuming the stack is already up");
+    make("e2e-seed");
   } else {
     make("e2e-up");
   }
