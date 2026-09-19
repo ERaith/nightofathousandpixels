@@ -1,0 +1,30 @@
+/* ==========================================================================
+   Portal — Aperture Science
+   --------------------------------------------------------------------------
+   Custom properties only. Every declaration in this file is a --token on
+   :root, and there is not a single selector below that line. That is the
+   pack contract (themes/README.md), and it is also the reason this file is
+   short: colour, type and copy is the whole job, and the layout it lands in
+   already works at 320px without this file's help.
+
+   The palette and the eight required tokens are in manifest.json, which is
+   loaded first and emitted into :root above this. This file is for the few
+   values that are derived from those rather than chosen independently —
+   a pack that repeated #ff9f4a here would have two places to change it.
+
+   Aperture is a company that builds enormous facilities and then labels them
+   in condensed sans on a white strip. What makes it read is not the orange,
+   it is the restraint: 2px corners, hairline rules, one accent used sparingly
+   and never for decoration's sake. The temptation with a theme like this is
+   scanlines and a monospace font, which is a different franchise.
+   ========================================================================== */
+
+:root {
+  /* A colder, harder shadow than the base one. Aperture surfaces are lit from
+     above by something institutional and unkind, so the ambient bloom goes and
+     what is left is a hairline and a drop. */
+  --shadow:
+    0 0 0 1px rgb(255 159 74 / 0.05),
+    0 1px 0 rgb(255 255 255 / 0.03),
+    0 12px 30px rgb(0 0 0 / 0.55);
+}

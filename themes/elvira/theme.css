@@ -1,0 +1,29 @@
+/* ==========================================================================
+   Elvira — Mistress of the Dark
+   --------------------------------------------------------------------------
+   Custom properties only. No selectors, no layout, no focus rules. The
+   palette, the type and the copy live in manifest.json and are emitted into
+   :root above this; this file holds the two or three values that are derived
+   from those rather than chosen on their own.
+
+   The trap with this theme is camp-as-clutter: a bat, a cobweb border, a
+   dripping font. Elvira's own set was never cluttered — it was a black room,
+   one purple wash, a red couch and her. So the pack is a very dark plum, one
+   lit orchid that does all the work, hot pink for things that are decoration
+   and only decoration, and a high-contrast fashion serif for the headings,
+   which is the single most Elvira decision in the file. Warmth comes from the
+   words, not from more objects on the screen.
+
+   Georgia for body text is deliberate and slightly unfashionable. It is warm,
+   it is on every phone, and it makes the long blocked-submission sentences
+   read like somebody talking rather than like an interface.
+   ========================================================================== */
+
+:root {
+  /* Derived from the accent in the manifest: a soft bloom in the same orchid,
+     so cards feel lit rather than outlined. Base.css applies it to .card, and
+     switches it off for print. */
+  --shadow:
+    0 1px 2px rgb(0 0 0 / 0.5),
+    0 16px 40px rgb(140 60 200 / 0.22);
+}

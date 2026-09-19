@@ -1,5 +1,7 @@
 package templates
 
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
 // MovieCardItem is one submission as a card, for a <ul class="card-grid">.
 //
 // The same card serves the slate and the "what you already have up" list on
@@ -12,7 +14,13 @@ package templates
 // base.css does the last one — .card__title sets overflow-wrap: anywhere and
 // .card sets min-inline-size: 0 so a grid child is allowed to shrink — which
 // is why nothing here truncates a title. A film's name is not decoration.
-templ MovieCardItem(m MovieCard) {
+//
+// It takes the theme rather than reading one off the movie, because a card is
+// rendered in two places — the slate and the submit page's "what you already
+// have up" list — and both already know the page they are on. A MovieCard is
+// one film; which season's theme it is being shown under is not a fact about
+// the film.
+templ MovieCardItem(t Theme, m MovieCard) {
 	<li class="card">
 		if m.CanEmbedTrailer() {
 			// loading="lazy" is not a micro-optimisation here. A full slate is
@@ -23,7 +31,7 @@ templ MovieCardItem(m MovieCard) {
 			<div class="card__media">
 				<iframe
 					src={ m.TrailerEmbedURL }
-					title={ "Trailer: " + m.Title }
+					title={ t.Text(viewmodel.KeyMovieTrailerTitle, viewmodel.PlaceholderTitle, m.Title) }
 					loading="lazy"
 					referrerpolicy="strict-origin-when-cross-origin"
 					allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
@@ -43,12 +51,12 @@ templ MovieCardItem(m MovieCard) {
 		</h3>
 		<p class="card__meta">
 			if m.IsWinner {
-				<span class="badge badge--accent">Winner</span>
+				<span class="badge badge--accent">{ t.Text(viewmodel.KeyMovieWinnerBadge) }</span>
 			}
 			if m.Hidden {
-				<span class="badge">Withdrawn</span>
+				<span class="badge">{ t.Text(viewmodel.KeyMovieWithdrawnBadge) }</span>
 			}
-			<span>Submitted by { m.SubmitterLabel() }</span>
+			<span>{ t.Text(viewmodel.KeyMovieSubmittedBy, viewmodel.PlaceholderName, m.SubmitterLabel()) }</span>
 		</p>
 		if m.HasDescription() {
 			<p class="card__body">{ m.Description }</p>
@@ -64,7 +72,7 @@ templ MovieCardItem(m MovieCard) {
 					target="_blank"
 					rel="noopener noreferrer"
 				>
-					Watch the trailer
+					{ t.Text(viewmodel.KeyMovieTrailerCTA) }
 					// Six cards means six links reading "Watch the trailer" in
 					// a screen reader's link list. The film's name is what
 					// tells them apart, and the new tab is worth warning about

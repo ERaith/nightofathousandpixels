@@ -107,17 +107,6 @@ const (
 	FlashError   = viewmodel.FlashError
 )
 
-// countOf renders a count with the right noun: "1 film", "6 films". It is the
-// smallest piece of copy on the site and the easiest one to get wrong, so it
-// is written once here rather than at each of the three call sites.
-func countOf(n int, one, many string) string {
-	if n == 1 {
-		return "1 " + one
-	}
-
-	return strconv.Itoa(n) + " " + many
-}
-
 // isCurrent reports whether a nav item points at the page being rendered.
 func isCurrent(p Page, item NavItem) bool {
 	return item.Href != "" && item.Href == p.Path
@@ -152,10 +141,24 @@ func noticeClass(f Flash) string {
 // It stays in this package rather than moving to the view model because it is
 // fixed copy that no handler assembles — the three values below are the whole
 // set, and a handler picks one rather than filling one in.
+//
+// Heading and Body are still plain strings, and still the unthemed copy, so
+// that a caller holding an ErrorContent can print one without a theme in hand —
+// internal/signin does exactly that for a page title. Themed swaps in the
+// pack's version where there is one. The two have to agree, so the strings
+// below and their entries in viewmodel.BaseCopy are the same strings, and
+// TestErrorContentMatchesBaseCopy says so out loud.
 type ErrorContent struct {
 	Status  int
 	Heading string
 	Body    string
+
+	// HeadingKey and BodyKey are the copy keys a pack overrides. Blank on an
+	// ErrorContent somebody built by hand, which then simply renders as
+	// written — an error page that a pack has nothing to say about is still an
+	// error page.
+	HeadingKey string
+	BodyKey    string
 }
 
 // StatusText renders the status code for the badge on an error page.
@@ -163,31 +166,50 @@ func (e ErrorContent) StatusText() string {
 	return strconv.Itoa(e.Status)
 }
 
+// Themed returns e with the theme's wording where the theme has some.
+//
+// An unthemed site, a pack that says nothing about errors, and an ErrorContent
+// with no keys all come back unchanged, which is why the template can call this
+// unconditionally.
+func (e ErrorContent) Themed(t Theme) ErrorContent {
+	if e.HeadingKey != "" {
+		e.Heading = t.Text(e.HeadingKey)
+	}
+	if e.BodyKey != "" {
+		e.Body = t.Text(e.BodyKey)
+	}
+
+	return e
+}
+
 // The two errors a visitor can actually see.
 var (
 	// NotFoundContent is the 404 page's copy.
 	NotFoundContent = ErrorContent{
-		Status:  404,
-		Heading: "That page isn't here",
-		Body: "The link may be out of date, or a season that hasn't opened yet. " +
-			"Nothing is broken — there is just nothing at this address.",
+		Status:     404,
+		Heading:    viewmodel.BaseCopy[viewmodel.KeyError404Heading],
+		Body:       viewmodel.BaseCopy[viewmodel.KeyError404Body],
+		HeadingKey: viewmodel.KeyError404Heading,
+		BodyKey:    viewmodel.KeyError404Body,
 	}
 
 	// ServerErrorContent is the 500 page's copy. It does not show the error:
 	// the visitor cannot act on it, and it goes to the logs instead.
 	ServerErrorContent = ErrorContent{
-		Status:  500,
-		Heading: "Something went wrong on our end",
-		Body: "The server hit an error and gave up on this page. It has been logged. " +
-			"Try again in a minute, and say something in the group chat if it keeps happening.",
+		Status:     500,
+		Heading:    viewmodel.BaseCopy[viewmodel.KeyError500Heading],
+		Body:       viewmodel.BaseCopy[viewmodel.KeyError500Body],
+		HeadingKey: viewmodel.KeyError500Heading,
+		BodyKey:    viewmodel.KeyError500Body,
 	}
 )
 
 // MethodNotAllowedContent is the 405. It exists so that a wrong verb on a real
 // route still lands on a page that looks like the site.
 var MethodNotAllowedContent = ErrorContent{
-	Status:  405,
-	Heading: "That isn't something you can do here",
-	Body: "The page exists, but not for the kind of request that reached it. " +
-		"This usually means a stale form or a reloaded submission.",
+	Status:     405,
+	Heading:    viewmodel.BaseCopy[viewmodel.KeyError405Heading],
+	Body:       viewmodel.BaseCopy[viewmodel.KeyError405Body],
+	HeadingKey: viewmodel.KeyError405Heading,
+	BodyKey:    viewmodel.KeyError405Body,
 }
