@@ -2,6 +2,6 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "embedded",
-  "dolt_database": "nightofathousandpixels",
-  "project_id": "f005cbf2-c513-4472-8b73-b2134f960c9b"
+  "dolt_database": "nap",
+  "project_id": "efefc148-17c2-4081-b51c-9bbe9d6de5f9"
 }
