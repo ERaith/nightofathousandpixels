@@ -1,0 +1,19 @@
+{
+  "name": "nap-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end browser tests for Night of a Thousand Pixels. Black-box: shares no code with the Go application.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "playwright test",
+    "ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "codegen": "playwright codegen",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}
