@@ -89,15 +89,18 @@ FROM ${RUNTIME_IMAGE} AS final
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/server /server
 
-# The stylesheets served under /static/. They are NOT embedded in the binary,
-# so an image without them boots, serves HTML, passes its health check, and
-# renders the site completely unstyled - every <link> in layout.templ 404s and
-# nothing logs an error. Found by the e2e smoke test fetching base.css from the
-# running container, which is the only place it can be caught.
+# The stylesheets, fonts and images served under /static/. They are not
+# embedded in the binary, so an image without them boots, serves HTML, passes a
+# health check and renders the site completely unstyled - every <link> in
+# layout.templ 404s and nothing logs an error. internal/web reads this
+# directory relative to the working directory, which is / here.
+# e2e/tests/smoke.spec.ts fetches base.css from the running container, because
+# that is the only place this can be caught.
 #
-# WORKDIR is explicit because distroless:nonroot defaults it to /home/nonroot
-# and internal/web resolves "static" RELATIVELY - copying to /static without
-# this puts it exactly one directory from where the server looks.
+# WORKDIR is set explicitly because distroless:nonroot sets it to
+# /home/nonroot, and internal/web resolves "static" RELATIVELY. Copying the
+# directory to /static without this line puts it exactly one directory away
+# from where the server looks, which is the same 404 with a longer diagnosis.
 WORKDIR /
 COPY static /static
 

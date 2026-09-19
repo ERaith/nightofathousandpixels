@@ -1,0 +1,85 @@
+# Browser-test overlay (ticket G3), layered on top of the integration-test one:
+#
+#   docker compose -p "$COMPOSE_TEST_PROJECT" \
+#     -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.e2e.yml \
+#     --profile e2e up -d
+#
+# (`make e2e-up` does exactly that.)
+#
+# It adds the OIDC provider the suite signs in against, and it solves the one
+# genuinely awkward thing about testing an OIDC flow against a containerised
+# app.
+#
+# ---------------------------------------------------------------------------
+# Why `network_mode: service:mockoidc`
+# ---------------------------------------------------------------------------
+#
+# An OIDC issuer is ONE string. The discovery document, the `iss` claim and the
+# client's configured issuer are compared byte for byte, and every endpoint the
+# provider advertises hangs off the same base URL. But two different parties
+# have to reach that URL:
+#
+#   * the app, from inside the container, for discovery, the JWKS fetch and the
+#     code exchange;
+#   * the BROWSER, from the host, for the authorize redirect.
+#
+# On Docker Desktop those two have no host name in common. `mockoidc` resolves
+# only inside the network; `localhost` means the container to one and the
+# laptop to the other; `host.docker.internal` does not resolve on the host at
+# all (checked, not assumed). Rewriting the issuer per-party is not an option -
+# that is the one value OIDC will not let you lie about.
+#
+# So the app is put in the provider's network namespace. `localhost:<oidc
+# port>` is then the same socket for the app and, through the published port,
+# for the browser, and one issuer string satisfies both. The provider owns the
+# namespace rather than the app because ordering only works in that direction:
+# once C3 wires auth.New into startup the app performs discovery as it boots
+# and must find the provider already listening, and `depends_on:
+# service_healthy` can only wait on a container the app is not itself hosting.
+#
+# The cost is that a service sharing a namespace cannot publish its own ports,
+# so the app's are published by `mockoidc` below. Nothing else changes: the app
+# still reaches postgres by service name, because the namespace it joins is on
+# the same network.
+services:
+  mockoidc:
+    profiles: ["e2e"]
+    build:
+      context: .
+      target: mockoidcd
+    environment:
+      # One variable, not two. The provider derives the address it advertises
+      # from the issuer it is given, so it cannot drift from what the app is
+      # configured with - and if it is handed an issuer it cannot serve, it
+      # refuses to start rather than serving a subtly different one.
+      OAUTH_ISSUER_URL: ${E2E_ISSUER_URL:?E2E_ISSUER_URL must be set - run this through `make e2e-up`}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:?OAUTH_CLIENT_ID must be set - copy .env.example to .env}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:?OAUTH_CLIENT_SECRET must be set - copy .env.example to .env}
+      MOCKOIDC_LISTEN: ":${TEST_OIDC_PORT:-9085}"
+    ports:
+      # The provider itself. Container port and host port are deliberately the
+      # same number: the app and the browser share the issuer URL, so they must
+      # also share the port in it.
+      - "127.0.0.1:${TEST_OIDC_PORT:-9085}:${TEST_OIDC_PORT:-9085}"
+      # The app's port, published here because `app` has no network namespace
+      # of its own to publish from. See the note above.
+      - "127.0.0.1:${TEST_APP_PORT:-8085}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:${TEST_OIDC_PORT:-9085}/oidc/.well-known/openid-configuration"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+    restart: "no"
+
+  app:
+    # `!override` because compose APPENDS list fields across -f files: without
+    # it the base file's published port would survive, and a service in another
+    # container's network namespace may not publish ports at all.
+    ports: !override []
+    network_mode: "service:mockoidc"
+    environment:
+      OAUTH_ISSUER_URL: ${E2E_ISSUER_URL:?E2E_ISSUER_URL must be set - run this through `make e2e-up`}
+    depends_on:
+      mockoidc:
+        condition: service_healthy

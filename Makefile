@@ -53,6 +53,11 @@ TEST_APP_PORT      := $(shell expr 8085 + $(AGENT_SLOT) '*' 10)
 # more importantly do not share one, since the issuer is baked into every
 # session cookie's provenance.
 OIDC_PORT := $(shell expr 9000 + $(AGENT_SLOT) '*' 10)
+# The mock OIDC provider the browser tests sign in against (ticket G3). Its
+# container port and its host port are the same number on purpose: the app and
+# the browser have to agree on one issuer URL, port included. See the long note
+# in docker-compose.e2e.yml.
+TEST_OIDC_PORT     := $(shell expr 9085 + $(AGENT_SLOT) '*' 10)
 
 # The test stack is a separate compose project, not an overlay on the dev one:
 # `docker compose -f a.yml -f b.yml` under one project name would replace the
@@ -99,6 +104,11 @@ TEST_DATABASE_URL := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:
 COMPOSE_ORIGIN      := http://localhost:$(APP_PORT)
 COMPOSE_TEST_ORIGIN := http://localhost:$(TEST_APP_PORT)
 
+# The issuer the e2e stack runs against. `/oidc` is not decoration: mockoidc
+# serves its endpoints under that path and cannot be told otherwise, and
+# mockoidcd refuses to start if the issuer it is handed does not end in it.
+E2E_ISSUER_URL := http://localhost:$(TEST_OIDC_PORT)/oidc
+
 # Say so out loud rather than ignoring a value someone took the trouble to set.
 $(foreach v,PORT DATABASE_URL ORIGIN OAUTH_ISSUER_URL,$(if $(and $(ENV_SUPPLIED_$(v)),$(filter-out $($(v)),$(ENV_SUPPLIED_$(v)))),$(warning .env sets $(v)=$(ENV_SUPPLIED_$(v)), which AGENT_SLOT=$(AGENT_SLOT) overrides with $($(v)). Remove it from .env, or pass $(v)=... on the make command line.)))
 
@@ -113,6 +123,7 @@ COMPOSE_TEST   := $(COMPOSE) -p $(COMPOSE_TEST_PROJECT) -f docker-compose.yml -f
 # The deploy never passes docker-compose.dev.yml to -f, which is what keeps the
 # mock provider out of production - see the header of that file.
 COMPOSE_DEV    := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
+COMPOSE_E2E    := $(COMPOSE_TEST) -f docker-compose.e2e.yml --profile e2e
 MIGRATIONS_DIR ?= internal/store/migrations
 QUERIES_DIR    ?= queries
 BIN_DIR        ?= bin
@@ -131,6 +142,20 @@ GOOSE_MIGRATION_DIR := $(MIGRATIONS_DIR)
 # agents' worktrees, and build output.
 WATCH_EXCLUDE_DIRS := archive,worktrees,node_modules,tmp,bin,.git,.beads,testdata
 TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+
+# The same list, ANCHORED at this checkout's root.
+#
+# TEMPL_IGNORE above is unanchored, and templ matches it against ABSOLUTE
+# paths. Inside worktrees/<agent>/ every absolute path contains "/worktrees/",
+# so the pattern matches every file in the tree and templ generates nothing at
+# all while still printing a tick and exiting 0 (ticket nap-hil). Anchoring at
+# $(CURDIR) means "the worktrees directory belonging to THIS checkout", which
+# is the real intent: it still excludes other agents' checkouts from the main
+# clone, and matches nothing inside a worktree, where there are none.
+#
+# Scoped to the e2e guard below rather than replacing TEMPL_IGNORE, because the
+# shared targets are nap-hil's to change and several agents run them.
+TEMPL_IGNORE_ANCHORED := ^$(CURDIR)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
 .DEFAULT_GOAL := help
 
@@ -395,6 +420,10 @@ compose-config: ## Print the fully resolved compose config for this slot
 compose-test-config: ## Print the fully resolved test-stack config for this slot
 	$(COMPOSE_TEST) config
 
+.PHONY: compose-e2e-config
+compose-e2e-config: ## Print the fully resolved e2e-stack config for this slot
+	$(COMPOSE_E2E) config
+
 # ---------------------------------------------------------------------------
 # Throwaway test database
 # ---------------------------------------------------------------------------
@@ -411,6 +440,95 @@ test-db-up: ## Start the disposable test database and migrate it
 test-db-down: ## Stop and erase the disposable test database
 	$(COMPOSE_TEST) down -v
 
+# ---------------------------------------------------------------------------
+# End-to-end browser tests (ticket G3)
+# ---------------------------------------------------------------------------
+#
+# The suite is a Node project in e2e/ driving @playwright/test. It shares no
+# code with the application - it is black-box HTTP against the shipped image -
+# so the second language costs nothing and buys the trace viewer, UI mode and
+# codegen.
+#
+# `npx playwright test` from e2e/ does the same thing: its global setup calls
+# `make e2e-up` and its teardown calls `make e2e-down`, so the stack is brought
+# up the one way rather than two.
+
+# The e2e suite resolves its ports from here rather than re-deriving them, so
+# the slot arithmetic has exactly one home. e2e/lib/stack.ts parses this.
+.PHONY: e2e-env
+e2e-env: ## Print the environment the e2e suite runs against
+	@echo "AGENT_SLOT=$(AGENT_SLOT)"
+	@echo "E2E_BASE_URL=$(COMPOSE_TEST_ORIGIN)"
+	@echo "E2E_ISSUER_URL=$(E2E_ISSUER_URL)"
+	@echo "E2E_OIDC_PORT=$(TEST_OIDC_PORT)"
+	@echo "E2E_CLIENT_ID=$(OAUTH_CLIENT_ID)"
+	@echo "E2E_CLIENT_SECRET=$(OAUTH_CLIENT_SECRET)"
+	@echo "E2E_COMPOSE_PROJECT=$(COMPOSE_TEST_PROJECT)"
+
+# The browser tests assert on rendered HTML, and the image they run against is
+# built from the COMMITTED *_templ.go - the Dockerfile only runs `go build`.
+# So a .templ edited without regenerating produces a suite that passes against
+# markup nobody is serving any more. Inside a worktree that is not hypothetical:
+# `make templ-generate` silently generates nothing there (nap-hil), so the
+# normal way of keeping them in step does not work and says nothing about it.
+#
+# This regenerates IN PLACE and fails if anything changed. Delete it when
+# nap-hil lands and templ-generate is trustworthy everywhere.
+.PHONY: e2e-templ-fresh
+e2e-templ-fresh: ## Fail if the committed templ output is stale
+	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_ANCHORED)' >/dev/null
+	@if [ -n "$$(git status --porcelain -- '*_templ.go')" ]; then \
+		echo "" >&2; \
+		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
+		git status --short -- '*_templ.go' >&2; \
+		echo "" >&2; \
+		echo "The e2e suite tests the committed output, so it would have passed" >&2; \
+		echo "against markup nobody is serving. Review the diff and commit it." >&2; \
+		exit 1; \
+	fi
+
+.PHONY: e2e
+e2e: e2e-install e2e-typecheck e2e-templ-fresh ## Run the Playwright end-to-end suite against a throwaway stack
+	cd e2e && npx playwright test $(E2E_ARGS)
+
+# Playwright transpiles TypeScript without type-checking it, so a spec with a
+# type error runs anyway and fails somewhere less informative. This is cheap
+# and catches it at the right place.
+.PHONY: e2e-typecheck
+e2e-typecheck: ## Type-check the e2e suite
+	cd e2e && npx tsc --noEmit
+
+.PHONY: e2e-ui
+e2e-ui: e2e-install ## Open Playwright's UI mode against a throwaway stack
+	cd e2e && E2E_KEEP_STACK=1 npx playwright test --ui
+
+.PHONY: e2e-report
+e2e-report: ## Open the HTML report from the last e2e run
+	cd e2e && npx playwright show-report
+
+# `npm ci` needs a lockfile and reinstalls from scratch; falling back to
+# `npm install` keeps a fresh clone working before one is committed.
+.PHONY: e2e-install
+e2e-install: ## Install the e2e suite's node dependencies and browsers
+	@cd e2e && if [ -f package-lock.json ]; then npm ci; else npm install; fi
+	@cd e2e && npx playwright install chromium
+
+.PHONY: e2e-up
+e2e-up: ## Bring up the e2e stack: throwaway database, mock OIDC provider, app
+	$(COMPOSE_E2E) up -d --build --wait mockoidc postgres
+	$(COMPOSE_E2E) run --rm --build migrate
+	$(COMPOSE_E2E) up -d --build --wait app
+	@echo "==> e2e app  http://localhost:$(TEST_APP_PORT)"
+	@echo "==> e2e oidc $(E2E_ISSUER_URL)"
+
+.PHONY: e2e-down
+e2e-down: ## Stop the e2e stack and erase its database
+	$(COMPOSE_E2E) down -v --remove-orphans
+
+.PHONY: e2e-logs
+e2e-logs: ## Follow the e2e stack's container logs
+	$(COMPOSE_E2E) logs -f
+
 # Prints the slot-derived environment. Useful when two agents are debugging why
 # they are or are not sharing something.
 .PHONY: slot-env
@@ -424,9 +542,12 @@ slot-env: ## Print the environment this slot derives
 	@echo "POSTGRES_PORT=$$POSTGRES_PORT"
 	@echo "TEST_POSTGRES_PORT=$$TEST_POSTGRES_PORT"
 	@echo "TEST_APP_PORT=$$TEST_APP_PORT"
+	@echo "TEST_OIDC_PORT=$$TEST_OIDC_PORT"
 	@echo "DATABASE_URL=$$DATABASE_URL"
 	@echo "TEST_DATABASE_URL=$$TEST_DATABASE_URL"
 	@echo "ORIGIN=$$ORIGIN"
 	@echo "OIDC_PORT=$$OIDC_PORT"
 	@echo "OAUTH_ISSUER_URL=$$OAUTH_ISSUER_URL"
 	@echo "COMPOSE_ORIGIN=$$COMPOSE_ORIGIN"
+	@echo "COMPOSE_TEST_ORIGIN=$$COMPOSE_TEST_ORIGIN"
+	@echo "E2E_ISSUER_URL=$$E2E_ISSUER_URL"
