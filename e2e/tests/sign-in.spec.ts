@@ -21,36 +21,19 @@ function harnessState(): HarnessState {
 }
 
 test.describe("sign-in", () => {
-  test("is not mounted yet - delete this test when nap-9jw lands", async ({ request }) => {
-    // TRIP-WIRE. This asserts what IS true, not what SHOULD be. When the
-    // router grows /auth/login this test fails, and that failure is the
-    // instruction: delete this test, unskip the journey below, and the global
-    // setup starts saving a real session instead of an empty one.
-    const login = await request.get("/auth/login", { maxRedirects: 0 });
-    const callback = await request.get("/auth/callback", { maxRedirects: 0 });
+  test("through the mock provider establishes a session", async ({ page, context }) => {
+    // nap-9jw has landed, so the skip guard that used to stand here is gone
+    // rather than left to disable itself. It was conditional on
+    // harnessState().authWired, which is now always true - and a guard that can
+    // only ever pass is indistinguishable, in a report, from one silently
+    // hiding a broken sign-in. If /auth/login regresses this must go red, not
+    // green with a skip. That failure mode has already cost this project eight
+    // false greens (nap-gn1, nap-hil).
+    expect(harnessState().authWired, "harness did not sign in").toBe(true);
 
-    expect(login.status(), "GET /auth/login").toBe(404);
-    expect(callback.status(), "GET /auth/callback").toBe(404);
-
-    // And the global setup reached the same conclusion. Without this the setup
-    // could quietly decide auth was wired, skip the sign-in it could not
-    // perform, and leave every session-dependent spec skipping for a reason
-    // nobody had checked.
-    expect(harnessState()).toMatchObject({ authWired: false, loginStatus: 404, email: null });
-  });
-
-  test("through the mock provider establishes a session [skipped until nap-9jw]", async ({
-    page,
-    context,
-  }) => {
-    test.skip(
-      !harnessState().authWired,
-      "nap-9jw: cmd/server does not mount /auth/login or a session store yet",
-    );
-
-    // The shape this takes once the route exists. The global setup already
-    // performs exactly this and saves the result, so by the time this runs it
-    // is re-proving the flow rather than establishing it.
+    // The global setup already performs exactly this and saves the result, so
+    // by the time this runs it is re-proving the flow rather than establishing
+    // it.
     await page.goto("/auth/login");
     await page.waitForURL((url) => !url.pathname.startsWith("/auth/"));
 
