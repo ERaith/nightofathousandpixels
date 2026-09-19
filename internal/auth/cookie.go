@@ -119,20 +119,14 @@ func newCookieAEAD(secret, label string) (cipher.AEAD, error) {
 }
 
 func (c *flowCookie) set(w http.ResponseWriter, state flowState) error {
-	payload, err := json.Marshal(state)
+	value, err := sealJSON(c.aead, c.aad, state)
 	if err != nil {
-		return fmt.Errorf("auth: encode flow state: %w", err)
+		return err
 	}
-
-	nonce := make([]byte, c.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("auth: cookie nonce: %w", err)
-	}
-	sealed := c.aead.Seal(nonce, nonce, payload, c.aad)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     flowCookieName,
-		Value:    base64.RawURLEncoding.EncodeToString(sealed),
+		Value:    value,
 		Path:     c.path,
 		MaxAge:   int(flowTTL.Seconds()),
 		HttpOnly: true,
@@ -153,26 +147,12 @@ func (c *flowCookie) get(r *http.Request) (flowState, error) {
 		return zero, fmt.Errorf("auth: read flow cookie: %w", err)
 	}
 
-	sealed, err := base64.RawURLEncoding.DecodeString(cookie.Value)
-	if err != nil {
-		return zero, errors.New("auth: flow cookie is not valid base64")
-	}
-	if len(sealed) < c.aead.NonceSize() {
-		return zero, errors.New("auth: flow cookie is truncated")
-	}
-
-	nonce, ciphertext := sealed[:c.aead.NonceSize()], sealed[c.aead.NonceSize():]
-	payload, err := c.aead.Open(nil, nonce, ciphertext, c.aad)
-	if err != nil {
+	var state flowState
+	if err := openJSON(c.aead, c.aad, cookie.Value, &state); err != nil {
 		// Tampered with, sealed under a different secret, or sealed as a
 		// different kind of cookie -- the AAD makes that last one fail here
 		// rather than one layer further in. All of them are "start again".
-		return zero, errors.New("auth: flow cookie failed authentication")
-	}
-
-	var state flowState
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return zero, errors.New("auth: flow cookie payload is malformed")
+		return zero, fmt.Errorf("auth: flow cookie: %w", err)
 	}
 	// The expiry is inside the sealed payload as well as in Max-Age, because
 	// Max-Age is only advice to a cooperating browser.
@@ -214,4 +194,51 @@ func deriveCookieKey(secret, label string) ([]byte, error) {
 		return nil, fmt.Errorf("auth: derive cookie key: %w", err)
 	}
 	return key, nil
+}
+
+// sealJSON encodes payload as JSON and seals it under aead, binding aad.
+//
+// Both cookies this package sets go through it: the ten-minute flow cookie
+// above and the thirty-day session cookie in session.go. They do NOT share a
+// key -- each derives its own from COOKIE_SECRET under its own label, and each
+// binds its own AAD -- but there is no reason for them to have two copies of
+// the envelope format, and a second copy is exactly where a nonce gets reused
+// or an AAD gets dropped without anything going red.
+func sealJSON(aead cipher.AEAD, aad []byte, payload any) (string, error) {
+	plain, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("auth: encode cookie payload: %w", err)
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("auth: cookie nonce: %w", err)
+	}
+	// The nonce is prepended in the clear: it is not a secret, and openJSON
+	// needs it back before it can authenticate anything.
+	sealed := aead.Seal(nonce, nonce, plain, aad)
+
+	return base64.RawURLEncoding.EncodeToString(sealed), nil
+}
+
+// openJSON authenticates value under aead and aad and decodes it into dst.
+func openJSON(aead cipher.AEAD, aad []byte, value string, dst any) error {
+	sealed, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return errors.New("not valid base64")
+	}
+	if len(sealed) < aead.NonceSize() {
+		return errors.New("truncated")
+	}
+
+	nonce, ciphertext := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
+	plain, err := aead.Open(nil, nonce, ciphertext, aad)
+	if err != nil {
+		return errors.New("failed authentication")
+	}
+
+	if err := json.Unmarshal(plain, dst); err != nil {
+		return errors.New("payload is malformed")
+	}
+	return nil
 }

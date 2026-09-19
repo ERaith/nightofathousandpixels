@@ -20,9 +20,10 @@
 # Remember what .env supplied for the three values the slot owns, so that
 # setting one there is reported rather than silently ignored (see the warning
 # further down). Everything else in .env is the developer's to set.
-ENV_SUPPLIED_PORT         := $(PORT)
-ENV_SUPPLIED_DATABASE_URL := $(DATABASE_URL)
-ENV_SUPPLIED_ORIGIN       := $(ORIGIN)
+ENV_SUPPLIED_PORT             := $(PORT)
+ENV_SUPPLIED_DATABASE_URL     := $(DATABASE_URL)
+ENV_SUPPLIED_ORIGIN           := $(ORIGIN)
+ENV_SUPPLIED_OAUTH_ISSUER_URL := $(OAUTH_ISSUER_URL)
 
 # Export every variable defined here to recipes, so go, goose, sqlc and
 # docker compose all see the same values without repeating them per command.
@@ -46,6 +47,12 @@ POSTGRES_PORT    := $(shell expr 5433 + $(AGENT_SLOT) '*' 10)
 # must not share a port or a volume with the one holding your dev data.
 TEST_POSTGRES_PORT := $(shell expr 5434 + $(AGENT_SLOT) '*' 10)
 TEST_APP_PORT      := $(shell expr 8085 + $(AGENT_SLOT) '*' 10)
+
+# The development OIDC provider (ticket D7). Slot-derived like every other
+# port, so two agents running `make dev` do not fight over one provider - and
+# more importantly do not share one, since the issuer is baked into every
+# session cookie's provenance.
+OIDC_PORT := $(shell expr 9000 + $(AGENT_SLOT) '*' 10)
 
 # The test stack is a separate compose project, not an overlay on the dev one:
 # `docker compose -f a.yml -f b.yml` under one project name would replace the
@@ -73,6 +80,18 @@ DATABASE_URL := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POS
 # directly, so the browser-facing origin is the proxy's.
 ORIGIN := http://localhost:$(TEMPL_PROXY_PORT)
 
+# OAUTH_ISSUER_URL belongs to the slot for the same reason the three above do:
+# it names a port this Makefile publishes. It is assigned rather than
+# defaulted, so .env cannot quietly point slot 2's app at slot 0's provider --
+# which would work, right up until both slots' sessions were signed by one
+# provider and nobody could tell whose was whose.
+#
+# The /oidc suffix is not decoration: mockoidc serves its endpoints under that
+# path and cannot be told otherwise, so an issuer without it is one the
+# provider refuses to start against. Point this at Google (or any real issuer)
+# on the command line to develop against the real thing.
+OAUTH_ISSUER_URL := http://localhost:$(OIDC_PORT)/oidc
+
 TEST_DATABASE_URL := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(TEST_POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
 # ORIGIN for the containerised app, which is published on APP_PORT rather than
@@ -81,7 +100,7 @@ COMPOSE_ORIGIN      := http://localhost:$(APP_PORT)
 COMPOSE_TEST_ORIGIN := http://localhost:$(TEST_APP_PORT)
 
 # Say so out loud rather than ignoring a value someone took the trouble to set.
-$(foreach v,PORT DATABASE_URL ORIGIN,$(if $(and $(ENV_SUPPLIED_$(v)),$(filter-out $($(v)),$(ENV_SUPPLIED_$(v)))),$(warning .env sets $(v)=$(ENV_SUPPLIED_$(v)), which AGENT_SLOT=$(AGENT_SLOT) overrides with $($(v)). Remove it from .env, or pass $(v)=... on the make command line.)))
+$(foreach v,PORT DATABASE_URL ORIGIN OAUTH_ISSUER_URL,$(if $(and $(ENV_SUPPLIED_$(v)),$(filter-out $($(v)),$(ENV_SUPPLIED_$(v)))),$(warning .env sets $(v)=$(ENV_SUPPLIED_$(v)), which AGENT_SLOT=$(AGENT_SLOT) overrides with $($(v)). Remove it from .env, or pass $(v)=... on the make command line.)))
 
 # ---------------------------------------------------------------------------
 # Paths and tools
@@ -89,6 +108,11 @@ $(foreach v,PORT DATABASE_URL ORIGIN,$(if $(and $(ENV_SUPPLIED_$(v)),$(filter-ou
 GO             ?= go
 COMPOSE        ?= docker compose
 COMPOSE_TEST   := $(COMPOSE) -p $(COMPOSE_TEST_PROJECT) -f docker-compose.yml -f docker-compose.test.yml
+
+# The development stack: the base compose file plus the mock OIDC provider.
+# The deploy never passes docker-compose.dev.yml to -f, which is what keeps the
+# mock provider out of production - see the header of that file.
+COMPOSE_DEV    := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
 MIGRATIONS_DIR ?= internal/store/migrations
 QUERIES_DIR    ?= queries
 BIN_DIR        ?= bin
@@ -121,6 +145,7 @@ help: ## Show this help
 	@echo "  app        http://localhost:$(APP_PORT)"
 	@echo "  templ      http://localhost:$(TEMPL_PROXY_PORT)   <- open this one, it live-reloads"
 	@echo "  postgres   localhost:$(POSTGRES_PORT)"
+	@echo "  oidc       http://localhost:$(OIDC_PORT)/oidc   (mock provider, dev only)"
 	@echo ""
 	@echo "Targets:"
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) \
@@ -133,15 +158,16 @@ help: ## Show this help
 # Setup
 # ---------------------------------------------------------------------------
 .PHONY: setup
-setup: env-file require-compose ## Clean clone to running app: env, postgres, migrate, generate, seed
-	@echo "==> starting postgres (project $(COMPOSE_PROJECT_NAME), host port $(POSTGRES_PORT))"
-	$(COMPOSE) up -d $(POSTGRES_SERVICE)
+setup: env-file require-compose ## Clean clone to running app: env, postgres, oidc, migrate, generate, seed
+	@echo "==> starting postgres and the dev OIDC provider (project $(COMPOSE_PROJECT_NAME))"
+	$(COMPOSE_DEV) up -d --build $(POSTGRES_SERVICE) mockoidc
 	@$(MAKE) wait-for-postgres
 	@$(MAKE) migrate-up
 	@$(MAKE) sqlc-generate templ-generate
-	@$(MAKE) seed
+	@$(MAKE) seed-dev
 	@echo ""
 	@echo "==> ready. run 'make dev' and open http://localhost:$(TEMPL_PROXY_PORT)"
+	@echo "    sign in at http://localhost:$(TEMPL_PROXY_PORT)/auth/login - see README.md for the test users"
 
 .PHONY: env-file
 env-file:
@@ -178,9 +204,23 @@ require-compose:
 # ---------------------------------------------------------------------------
 # Development
 # ---------------------------------------------------------------------------
+# The dev stack the watchers run against. The server performs OIDC discovery
+# at startup and will not come up without a reachable provider, so this has to
+# happen before `dev-server` rather than beside it.
+.PHONY: dev-up
+dev-up: require-compose ## Start the dev stack: postgres and the mock OIDC provider
+	$(COMPOSE_DEV) up -d --build $(POSTGRES_SERVICE) mockoidc
+	@$(MAKE) wait-for-postgres
+	@echo "==> oidc provider on http://localhost:$(OIDC_PORT)/oidc"
+
+.PHONY: dev-down
+dev-down: ## Stop the dev stack, keeping the database volume
+	$(COMPOSE_DEV) down
+
 .PHONY: dev
-dev: ## Run all three watchers together (templ proxy, server, sqlc)
-	@echo "==> slot $(AGENT_SLOT): open http://localhost:$(TEMPL_PROXY_PORT) (app $(APP_PORT), postgres $(POSTGRES_PORT))"
+dev: dev-up ## Run all three watchers together (templ proxy, server, sqlc)
+	@echo "==> slot $(AGENT_SLOT): open http://localhost:$(TEMPL_PROXY_PORT) (app $(APP_PORT), postgres $(POSTGRES_PORT), oidc $(OIDC_PORT))"
+	@echo "==> sign in: http://localhost:$(TEMPL_PROXY_PORT)/auth/login"
 	@$(MAKE) -j3 dev-templ dev-server dev-sqlc
 
 # templ's own watcher is the only thing that refreshes the browser: it
@@ -303,12 +343,28 @@ templ-generate: ## Generate Go from *.templ
 # Data and images
 # ---------------------------------------------------------------------------
 .PHONY: seed
-seed: ## Load development seed data
-	@if [ -d ./cmd/seed ]; then \
-		$(GO) run ./cmd/seed; \
-	else \
-		echo "==> no cmd/seed yet - skipping"; \
+seed: seed-dev ## Load development seed data (alias for seed-dev)
+
+# One command from a clean checkout, which is the whole point of ticket D7.
+# It migrates first so that `make seed-dev` works against a database that has
+# only just been created, rather than failing with "relation does not exist"
+# and making the reader work out that migrate-up was the missing step.
+.PHONY: seed-dev
+seed-dev: ## Seed the 2026 season and the four test users (see README.md)
+	@$(MAKE) migrate-up
+	$(GO) run ./cmd/seed
+
+# The guarantee that the mock provider is not in the shipped binary, checked
+# against the build graph rather than trusted. A Dockerfile stage is a
+# convention; an absent import is a fact.
+.PHONY: no-mock-provider-in-server
+no-mock-provider-in-server: ## Fail if the mock OIDC provider is reachable from cmd/server
+	@if $(GO) list -deps ./cmd/server | grep -q "oauth2-proxy/mockoidc"; then \
+		echo "FAIL: oauth2-proxy/mockoidc is a dependency of ./cmd/server." >&2; \
+		echo "      The mock identity provider would ship in the server binary." >&2; \
+		exit 1; \
 	fi
+	@echo "==> ok: the mock OIDC provider is not reachable from ./cmd/server"
 
 .PHONY: docker-build
 docker-build: ## Build the shipped image (distroless, server binary only)
@@ -371,4 +427,6 @@ slot-env: ## Print the environment this slot derives
 	@echo "DATABASE_URL=$$DATABASE_URL"
 	@echo "TEST_DATABASE_URL=$$TEST_DATABASE_URL"
 	@echo "ORIGIN=$$ORIGIN"
+	@echo "OIDC_PORT=$$OIDC_PORT"
+	@echo "OAUTH_ISSUER_URL=$$OAUTH_ISSUER_URL"
 	@echo "COMPOSE_ORIGIN=$$COMPOSE_ORIGIN"

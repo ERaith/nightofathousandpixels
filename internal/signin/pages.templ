@@ -1,0 +1,172 @@
+package signin
+
+import "strconv"
+import "github.com/ERaith/nightofathousandpixels/internal/web/templates"
+
+// The pages this package renders.
+//
+// They live here rather than in internal/web/templates because they are the
+// sign-in flow's own copy and are meaningless without it. They still go
+// through templates.Layout, so they get the same shell, the same stylesheet
+// and the same 320px behaviour as every other page; only the content inside
+// the shell is local.
+
+// NotOnTheListPage is what someone sees when they have signed in successfully
+// and are not on this season's whitelist.
+//
+// It is not a 403, and it is deliberately not written like one. The person
+// reading it is almost always a friend who was simply never added, so the page
+// tells them the truth -- we know who you are, you are just not on this year's
+// list -- names the address they arrived with so they can spot a wrong
+// account, and says what to do about it. A 403 with "Forbidden" would be the
+// same information rendered as an accusation.
+//
+// It also offers a way out: if they signed in with the wrong Google account,
+// signing out is the fix, and without this button they would have no way to
+// reach one.
+templ NotOnTheListPage(p templates.Page, email string, year int32) {
+	@templates.Layout(p) {
+		<div class="measure">
+			<div class="page-head">
+				<p class="badge">{ strconv.Itoa(int(year)) } season</p>
+				<h1>You're not on the list yet</h1>
+			</div>
+			<p class="lead">
+				You're signed in as <strong>{ email }</strong>, but that address
+				isn't on the { strconv.Itoa(int(year)) } list, so there's nothing
+				here for you to do yet.
+			</p>
+			<div class="notice" role="status">
+				<p class="mb-0">
+					<strong>Note:</strong>
+					{ " " }
+					Ask Eraith to add you, and send them this exact address —
+					{ " " }
+					<strong>{ email }</strong>. It's the address that has to
+					match, not your name.
+				</p>
+			</div>
+			<p>
+				Signed in with the wrong Google account? Sign out and try the
+				other one.
+			</p>
+			<div class="cluster">
+				<a class="btn btn--primary" href="/">Back to the front page</a>
+				@signOutButton()
+			</div>
+		</div>
+	}
+}
+
+// IdentityCollisionPage is the refusal for the case that needs a human.
+//
+// The address is on the list, but it is already attached to a different Google
+// account, so signing this person in would mean handing them somebody else's
+// row -- their submissions, their ballot, and possibly their admin flag. The
+// application cannot tell from here whether this is the same person with a new
+// account or a different person who now holds the address, so it refuses and
+// says so in terms an admin can act on.
+templ IdentityCollisionPage(p templates.Page, email string) {
+	@templates.Layout(p) {
+		<div class="measure">
+			<div class="page-head">
+				<p class="badge">Sign-in stopped</p>
+				<h1>That address is already claimed</h1>
+			</div>
+			<p class="lead">
+				<strong>{ email }</strong> is on the list, but it's already
+				linked to a different Google account than the one you just used.
+			</p>
+			<div class="notice notice--warn" role="alert">
+				<p class="mb-0">
+					<strong>Heads up:</strong>
+					{ " " }
+					We've stopped here on purpose. Signing you in would attach
+					you to whatever that other account has already done this
+					season, and nothing here can tell whether you're the same
+					person with a new Google account or a different person who
+					now has the address.
+				</p>
+			</div>
+			<p>
+				Tell Eraith which account you meant to use. If you replaced a
+				Google account, they can unlink the old one.
+			</p>
+			<div class="cluster">
+				<a class="btn btn--primary" href="/">Back to the front page</a>
+			</div>
+		</div>
+	}
+}
+
+// NoSeasonPage is what a signed-in person sees when there is no season to be a
+// member of yet: a fresh database, or a year where the season is still a draft.
+// Without it the whitelist gate would have to call this "not on the list",
+// which would send people to ask an admin to add them to something that does
+// not exist.
+templ NoSeasonPage(p templates.Page) {
+	@templates.Layout(p) {
+		<div class="measure">
+			<div class="page-head">
+				<h1>No season is open</h1>
+			</div>
+			<p class="lead">
+				You're signed in, but there's no season running yet, so there's
+				nothing to submit to or vote on.
+			</p>
+			<p>Check back when the link lands in the group chat.</p>
+			<div class="cluster">
+				<a class="btn btn--primary" href="/">Back to the front page</a>
+				@signOutButton()
+			</div>
+		</div>
+	}
+}
+
+// SignedInPage is where a successful sign-in lands.
+//
+// Its job is to prove, to the person and to whoever is testing, that the whole
+// path worked: the provider verified them, the session cookie came back, the
+// database found their row, and the whitelist let them through. So it names
+// all four rather than saying "welcome".
+templ SignedInPage(p templates.Page, v Viewer) {
+	@templates.Layout(p) {
+		<div class="measure">
+			<div class="page-head">
+				<p class="badge badge--accent">{ strconv.Itoa(int(v.Season.Year)) } season</p>
+				<h1>Signed in</h1>
+			</div>
+			<p class="lead">
+				You're signed in as <strong>{ v.DisplayName() }</strong>.
+			</p>
+			<dl>
+				<dt>Email</dt>
+				<dd>{ v.Person.Email }</dd>
+				<dt>Season</dt>
+				<dd>{ v.Season.Name } ({ v.Season.State })</dd>
+				<dt>Role</dt>
+				<dd>
+					if v.IsAdmin() {
+						Admin
+					} else {
+						Voter
+					}
+				</dd>
+			</dl>
+			<div class="cluster">
+				<a class="btn btn--primary" href="/">Back to the front page</a>
+				@signOutButton()
+			</div>
+		</div>
+	}
+}
+
+// signOutButton is a form rather than a link on purpose. A GET /auth/logout
+// would be followed by anything that prefetches links -- a browser, a chat
+// client generating a preview, an antivirus scanner -- and each of those would
+// silently sign the person out.
+templ signOutButton() {
+	<form method="post" action="/auth/logout">
+		<button class="btn" type="submit">Sign out</button>
+	</form>
+}
