@@ -215,8 +215,13 @@ in the tree. Reproduced here — `updates=0`, and a deliberately corrupted
 generated file survived untouched.
 
 `make e2e` therefore runs `e2e-templ-fresh` first, which regenerates with a
-`$(CURDIR)`-anchored pattern and fails if anything changed. Delete it when
-nap-hil lands.
+pattern that includes `worktrees` only when this checkout actually has one
+(`$(wildcard)`, not a path spliced into the regex — see the note on
+`TEMPL_IGNORE_E2E` in the Makefile) and fails if anything changed.
+
+Delete the pattern when nap-hil lands. **Keep the guard.** A fix without a
+check just relocates the next occurrence; the pattern is the bug, but the
+absence of a check is why eight of these survived.
 
 ## Debugging a failure
 

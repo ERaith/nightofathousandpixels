@@ -120,19 +120,30 @@ GOOSE_MIGRATION_DIR := $(MIGRATIONS_DIR)
 WATCH_EXCLUDE_DIRS := archive,worktrees,node_modules,tmp,bin,.git,.beads,testdata
 TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
-# The same list, ANCHORED at this checkout's root.
+# The same list, with "worktrees" included only when this checkout HAS one.
 #
-# TEMPL_IGNORE above is unanchored, and templ matches it against ABSOLUTE
-# paths. Inside worktrees/<agent>/ every absolute path contains "/worktrees/",
-# so the pattern matches every file in the tree and templ generates nothing at
-# all while still printing a tick and exiting 0 (ticket nap-hil). Anchoring at
-# $(CURDIR) means "the worktrees directory belonging to THIS checkout", which
-# is the real intent: it still excludes other agents' checkouts from the main
-# clone, and matches nothing inside a worktree, where there are none.
+# templ matches the ignore pattern against ABSOLUTE paths, and TEMPL_IGNORE
+# above is unanchored. Inside worktrees/<agent>/ every absolute path therefore
+# contains "/worktrees/", the pattern matches every file in the tree, and templ
+# generates nothing at all while printing a tick and exiting 0 (nap-hil).
 #
-# Scoped to the e2e guard below rather than replacing TEMPL_IGNORE, because the
-# shared targets are nap-hil's to change and several agents run them.
-TEMPL_IGNORE_ANCHORED := ^$(CURDIR)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+# Two fixes were considered and both are worse than this one:
+#
+#   - Anchoring at $(CURDIR) interpolates a filesystem path into a REGEX. This
+#     machine's path happens to be metacharacter-free, but a "." in it silently
+#     widens the pattern and a "+" or "(" makes it malformed - which is this
+#     same bug again, arriving by a different route.
+#   - Dropping "worktrees" outright removes the protection it exists for. The
+#     main clone currently holds nine other agents' worktrees, so templ would
+#     walk into all of them and rewrite their generated files.
+#
+# $(wildcard) asks the filesystem instead of the pattern. From the main clone
+# worktrees/ exists, so it is excluded - and no absolute path under the main
+# clone contains "/worktrees/" except the real one. From inside a worktree
+# there is none, so the alternative is omitted and nothing matches spuriously.
+# No path reaches the regex either way.
+TEMPL_WORKTREES_ALT := $(if $(wildcard $(CURDIR)/worktrees),worktrees|,)
+TEMPL_IGNORE_E2E    := (^|/)(archive|$(TEMPL_WORKTREES_ALT)node_modules|tmp|bin|\.git)(/|$$)
 
 .DEFAULT_GOAL := help
 
@@ -421,7 +432,7 @@ e2e-env: ## Print the environment the e2e suite runs against
 # nap-hil lands and templ-generate is trustworthy everywhere.
 .PHONY: e2e-templ-fresh
 e2e-templ-fresh: ## Fail if the committed templ output is stale
-	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_ANCHORED)' >/dev/null
+	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_E2E)' >/dev/null
 	@if [ -n "$$(git status --porcelain -- '*_templ.go')" ]; then \
 		echo "" >&2; \
 		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
