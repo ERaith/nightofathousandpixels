@@ -1,0 +1,41 @@
+package templates
+
+// SiteHeader is the wordmark and the primary navigation.
+//
+// The nav is data, not markup: a page hands Layout the links it wants, and the
+// item matching Page.Path gets aria-current="page". Today that list is a
+// placeholder with one entry (see DefaultNav); ticket E1 adds Submit and E4
+// adds the slate. Nothing here needs to change when they do.
+//
+// An empty nav renders no <nav> element at all rather than an empty landmark,
+// which a screen reader would otherwise announce and then find nothing in.
+templ SiteHeader(p Page) {
+	{{ theme := p.Theme.Resolve() }}
+	<header class="site-header">
+		<div class="container site-header__inner">
+			<a class="wordmark" href="/">{ theme.SiteTitle }</a>
+			if len(p.Nav) > 0 {
+				<nav class="nav" aria-label="Primary">
+					for _, item := range p.Nav {
+						if p.isCurrent(item) {
+							<a href={ item.Href } aria-current="page">{ item.Label }</a>
+						} else {
+							<a href={ item.Href }>{ item.Label }</a>
+						}
+					}
+				</nav>
+			}
+		</div>
+	</header>
+}
+
+// DefaultNav is the placeholder navigation: only the routes that exist.
+//
+// It deliberately does not list Submit or Past years yet. A header full of
+// links that 404 is worse than a short one, and the two weeks this page spends
+// as the team's front door are exactly when a dead link would get normalised.
+func DefaultNav() []NavItem {
+	return []NavItem{
+		{Label: "Home", Href: "/"},
+	}
+}

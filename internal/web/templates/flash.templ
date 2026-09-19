@@ -1,0 +1,33 @@
+package templates
+
+// FlashRegion renders a page's one-shot messages, or nothing at all.
+//
+// It emits no wrapper when there is nothing to say, which matters because the
+// wrapper is a child of the .stack-lg container in Layout: an empty <div>
+// there would still take a 2rem gap.
+templ FlashRegion(flashes []Flash) {
+	if len(flashes) > 0 {
+		<div class="stack">
+			for _, flash := range flashes {
+				@FlashMessage(flash)
+			}
+		</div>
+	}
+}
+
+// FlashMessage is one message: "Done: your movie is on the board.",
+// "Error: you have already submitted two movies."
+//
+// base.css draws a coloured edge per level, but the colour is the second
+// signal, never the only one. Every message leads with a word — Flash.Prefix —
+// and carries role="alert" or role="status" so a screen reader gets the same
+// information a sighted reader gets from the colour.
+templ FlashMessage(f Flash) {
+	<div class={ f.noticeClass() } role={ f.Role() }>
+		<p class="mb-0">
+			<strong>{ f.Prefix() }</strong>
+			{ " " }
+			{ f.Message }
+		</p>
+	</div>
+}

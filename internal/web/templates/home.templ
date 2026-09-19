@@ -1,0 +1,77 @@
+package templates
+
+// HomePage is the placeholder front page.
+//
+// It is a placeholder in the sense that no data reaches it yet — there is no
+// countdown, no slate and no sign-in button, because none of those exist. It
+// is not a placeholder in the sense of being provisional markup: the shape
+// here (page-head, a status notice, the three-step card grid, an empty state
+// for the archive) is what the real front page grows into once D1 knows the
+// season window and E4 has a slate to show.
+//
+// Everything on it is built out of base.css's own vocabulary, so it inherits
+// the 320px behaviour rather than re-deriving it: .card-grid collapses to one
+// column, .measure keeps the prose at a readable width, and nothing has a
+// fixed width that could push the page sideways.
+templ HomePage(p Page) {
+	@Layout(p) {
+		<div class="page-head measure">
+			if label := p.SeasonLabel(); label != "" {
+				<p class="badge badge--accent">{ label }</p>
+			}
+			<h1>{ p.Theme.Resolve().SiteTitle }</h1>
+			<p class="lead">
+				Thirty-odd friends, two picks each, and one instant-runoff count
+				that decides what goes on the screen.
+			</p>
+		</div>
+		<div class="notice notice--warn" role="status">
+			<p class="mb-0">
+				<strong>Coming soon.</strong>
+				{ " " }
+				The site is being rebuilt for this season. Submissions open in
+				early October — the link lands in the group chat.
+			</p>
+		</div>
+		<section>
+			<h2>How a movie gets picked</h2>
+			<ol class="card-grid">
+				<li class="card">
+					<p class="card__meta"><span class="badge">Step 1</span></p>
+					<h3 class="card__title">Submit</h3>
+					<p class="card__body">
+						Early October. Sign in with Google and put up to two
+						movies on the board. A trailer link helps everyone else
+						decide.
+					</p>
+				</li>
+				<li class="card">
+					<p class="card__meta"><span class="badge">Step 2</span></p>
+					<h3 class="card__title">Rank</h3>
+					<p class="card__body">
+						Then pick your top three, in order. The count is
+						instant-runoff, so a second choice is not a wasted
+						vote — it is what breaks the tie.
+					</p>
+				</li>
+				<li class="card">
+					<p class="card__meta"><span class="badge">Step 3</span></p>
+					<h3 class="card__title">Watch</h3>
+					<p class="card__body">
+						Movie night. The winner goes up on the screen, and then
+						into the archive next to every year before it.
+					</p>
+				</li>
+			</ol>
+		</section>
+		<section class="measure">
+			<h2>Past years</h2>
+			<div class="empty">
+				<p class="mb-0">
+					Nothing to browse here yet. Previous seasons move in as they
+					are imported, and then they stay put.
+				</p>
+			</div>
+		</section>
+	}
+}

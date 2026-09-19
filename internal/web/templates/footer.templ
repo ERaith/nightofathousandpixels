@@ -1,0 +1,20 @@
+package templates
+
+// SiteFooter closes the page. It stays deliberately small: the footer is not
+// where anyone looks for anything, and every link in it is a link that has to
+// keep working for the years these pages stay up.
+templ SiteFooter(p Page) {
+	{{ theme := p.Theme.Resolve() }}
+	<footer class="site-footer">
+		<div class="container">
+			<p class="meta mb-0">
+				{ theme.SiteTitle }
+				if label := p.SeasonLabel(); label != "" {
+					<span aria-hidden="true">·</span>
+					{ label }
+				}
+			</p>
+			<p class="meta mb-0">{ theme.Tagline }</p>
+		</div>
+	</footer>
+}

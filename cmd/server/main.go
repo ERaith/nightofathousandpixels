@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ERaith/nightofathousandpixels/internal/config"
+	"github.com/ERaith/nightofathousandpixels/internal/web"
 	"github.com/ERaith/nightofathousandpixels/internal/web/health"
 	"github.com/ERaith/nightofathousandpixels/internal/web/middleware"
 )
@@ -106,6 +107,10 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http
 	r.Use(middleware.RequestLogger(logger))
 
 	r.Method(http.MethodGet, "/healthz", health.NewHandler(pool, logger))
+
+	// The HTML pages and /static/. Origin is only used to build absolute URLs
+	// for link previews; nothing here reads the database.
+	web.New(web.Options{Origin: cfg.Origin}).Routes(r)
 
 	return r
 }
