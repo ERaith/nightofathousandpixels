@@ -1,157 +1,183 @@
 # Night of a Thousand Pixels
 
-Thirty-odd friends, two picks each, and one instant-runoff count that decides
-what goes on the screen. Go, Postgres, templ, server-rendered HTML.
+An annual movie-voting site for a group of friends. Each October everybody puts up
+to two films on the board, then ranks their top three, and an instant-runoff count
+decides what gets watched.
 
-## Getting started
+2025 ran on a Next.js app, now archived under `archive/2025/`. This is the 2026
+rewrite: Go, chi, templ, sqlc, PostgreSQL 16, Google sign-in.
 
-```sh
-make setup    # clean clone -> env file, postgres, mock OIDC provider, migrations, seed data
-make dev      # the watchers; open the templ proxy URL it prints
+---
+
+## Run it locally
+
+You need **Go 1.26+** and **Docker**. Nothing else — every tool (templ, sqlc, goose,
+air, golangci-lint) is pinned in `go.mod` and fetched on first use.
+
+```bash
+git clone https://github.com/ERaith/nightofathousandpixels.git
+cd nightofathousandpixels
+
+make setup    # postgres + mock OIDC, migrate, generate, seed. Takes a few minutes.
+make dev      # three watchers: templ, server, sqlc
 ```
 
-`make setup` is idempotent and safe to re-run. `make help` lists every target
-and prints the ports your agent slot owns.
+Then open **http://localhost:7331** — the templ proxy, not `:8080`. The proxy is what
+gives you live reload; the app port works but won't refresh itself.
 
-Several people (or agents) can run this on one machine at the same time:
-every port, container name, network and volume is derived from `AGENT_SLOT`,
-which defaults to 0.
+> The proxy only starts listening after templ's first generation pass. If `:7331`
+> refuses the connection for the first few seconds, that's why — it sorts itself out.
 
-```sh
-AGENT_SLOT=1 make dev
-```
+### Sign in
 
-| | slot 0 | formula |
+There is **no password and no bypass route**. Local dev runs a real OIDC provider
+(`devtools/mockoidcd`) and the app performs a real authorization-code flow against it,
+so development exercises exactly the same authentication code as production.
+
+Go to **http://localhost:7331/auth/login** and pick one:
+
+| user | what they are | use them to see |
 |---|---|---|
-| app | 8080 | `8080 + SLOT*10` |
-| templ proxy (open this one) | 7331 | `7331 + SLOT*10` |
-| postgres | 5433 | `5433 + SLOT*10` |
-| mock OIDC provider | 9000 | `9000 + SLOT*10` |
+| `alice@example.test` | whitelisted voter | the normal path |
+| `bob@example.test` | whitelisted voter | a second person on the board |
+| `admin@example.test` | season admin | anything admin-gated |
+| `stranger@example.test` | **not whitelisted** | the polite refusal |
 
-## Signing in locally
+`make setup` seeds a 2026 season in `submitting` with a 2-film limit per person.
 
-There is **no test login route and no `skipAuth`**. Local development signs in
-through a real OpenID Connect provider — `oauth2-proxy/mockoidc`, running as a
-container from `docker-compose.dev.yml` — so the application runs exactly the
-authentication code it runs in production: discovery, JWKS, PKCE S256, code
-exchange, RS256 signature verification, and the issuer, audience, expiry and
-nonce checks.
+---
 
-`OAUTH_ISSUER_URL` is the only thing that differs, and it is configuration. The
-consequence is worth being explicit about: **a misconfigured issuer in
-production means sign-in is broken, not bypassed.** There is no hole to leave
-open, because there is no hole.
+## Work through it
 
-Start at `/auth/login` (the header's **Sign in** link). Instead of Google's
-account chooser you get the mock provider's, listing the seeded users. Picking
-one decides which address the provider will sign a token for — it grants
-nothing on its own, and the application still verifies the token and still
-checks the season's whitelist.
+1. **Load `/slate` signed out.** The public board. With nothing on it you get the
+   empty state, which is deliberately an invitation rather than a "no results" message.
+2. **Sign in as Bob, submit a film.** Title, year, trailer URL, a line about why.
+   You land back on the slate with a confirmation and the film credited to you.
+3. **Submit a second.** Fine.
+4. **Try a third.** `409` — that's his cap. The cap is enforced in a transaction with
+   a row lock, not by hiding the button, so posting directly doesn't get around it.
+5. **Sign in as Stranger.** Reads the board fine. `/submit` explains they're not on
+   this year's list. Deliberately a 200 with a human page, not a 403.
+6. **Submit rubbish.** Blank title, `nineteen eighty-four` as the year, a bare
+   `youtube.com/...` trailer. `422`, three errors wired to their own fields, and every
+   value you typed comes back exactly as typed.
+7. **Refresh after submitting.** Nothing duplicates — the POST redirects.
 
-### Test users
+### Look at the themes
 
-`make seed-dev` creates a **2026 season in `submitting` state** and these four
-people. All four exist in `person`; only three are on the 2026 whitelist.
-
-| Address | Name | On the 2026 list? | What it shows |
-|---|---|---|---|
-| `admin@example.test` | Ada Admin | yes, `is_admin` | the admin path — `season_member.is_admin`, per season |
-| `alice@example.test` | Alice Voter | yes | the ordinary member path |
-| `bob@example.test` | Bob Voter | yes | a second member, for anything involving two people |
-| `stranger@example.test` | Sam Stranger | **no** | the "you're not on the list" page — a friendly page, not a 403 |
-
-`stranger@` is not an oversight. Without somebody who is genuinely not on the
-list, the refusal path is something you have to take on trust instead of
-something you can click.
-
-The seeded people have **no `google_sub`** until they first sign in, which is
-the state an admin's whitelist entry is actually in. So the first sign-in as
-each of them exercises the real row-claiming path rather than skipping it.
-
-The seed is additive and idempotent: every statement is an upsert on a natural
-key, re-running it changes nothing, and it never clears a `google_sub` that a
-sign-in has already written. To start over, delete the volume with
-`make compose-nuke`.
-
-### Signing in as somebody else
-
-Sign out (the button on `/me`), then sign in again and pick a different name.
-The session cookie is cleared with attributes matching the ones it was set
-with, so the browser actually drops it.
-
-Tests that drive the browser can skip the picker entirely by queueing an
-identity on the provider first:
-
-```sh
-curl -X POST http://localhost:9000/control/user \
-  -d '{"subject":"sub-alice","email":"alice@example.test","name":"Alice"}'
+```
+http://localhost:7331/gallery
 ```
 
-A queued identity takes precedence over the picker page.
+Every page under the season's theme pack. `?theme=portal`, `?theme=elvira` or
+`?theme=none` on any URL to compare. Elvira is the pick for 2026.
 
-## How authentication and authorisation fit together
+---
 
-They are deliberately separate, and the split is visible in the routing.
+## The commands that matter
 
-* **`internal/auth`** ends at *"this is a verified human with this verified
-  email address"*. It creates no session and decides nothing about access.
-* **`internal/signin`** resolves that identity to a `person` row, mints the
-  session cookie, and gates the pages behind it.
+```bash
+make help              # everything, with descriptions
 
-Signing in therefore **succeeds for anyone Google will vouch for**. Being
-allowed to *act* is a separate question, answered per request from the
-`season_member` row — which is why the session cookie carries an identifier and
-nothing else. Removing somebody from a season's whitelist, or taking away their
-admin flag, takes effect on their **next click**, not when their cookie
-expires.
+make setup             # clean clone → running, seeded app
+make dev               # the three watchers
+make dev-down          # stop, keep the database
+make seed              # reload the dev fixtures (idempotent)
 
-Three refusals that are deliberately different from each other:
-
-| Situation | What happens |
-|---|---|
-| Signed in, not on this season's list | 200 and a page naming the address and who to ask. Not a 403. |
-| Signed in, no season exists yet | 200 and "no season is open" — not "ask to be added" to something that does not exist. |
-| Address is on the list but belongs to a **different** Google account | 409, no session, and a page saying an admin has to sort it out. |
-
-That last one matters more than it looks. `UpsertPersonOnSignIn` reports it by
-returning **no rows**, which is the same signal Postgres gives for "nothing
-matched". Read as "person not found", the natural next step is to create the
-person — and creating the person *is* the account takeover the query's guard
-exists to prevent. See the comment on the query in
-`internal/store/queries/person.sql`.
-
-## Configuration
-
-`.env.example` documents every variable; `make setup` copies it to `.env`.
-
-Four values belong to the agent slot and are assigned by the Makefile, so
-setting them in `.env` has no effect (make prints a warning): `PORT`,
-`DATABASE_URL`, `ORIGIN` and `OAUTH_ISSUER_URL`.
-
-Two notes on cookies, both of which are silent when wrong:
-
-* `Secure` is derived from the **`ORIGIN` scheme**, never from the request.
-  Behind a TLS-terminating proxy `r.TLS` is nil on every request even though
-  the browser is on HTTPS, and `X-Forwarded-Proto` is a request header, which
-  is to say it is whatever the client last said it was. The server logs the
-  value it derived at startup — that log line is the cheap way to catch an
-  `ORIGIN` typo in a deployed environment.
-* `COOKIE_SECRET` must be at least 32 characters or the server refuses to
-  start. Changing it, or bumping the version suffix on either cookie label,
-  signs everybody out. Nothing is lost — no session state is stored
-  server-side — but it is a visible event for every user at once.
-
-## Testing
-
-```sh
-make test              # unit tests; does NOT touch a database
-make test-integration  # starts a throwaway postgres and runs against it
+make test              # unit tests
+make test-integration  # against a throwaway postgres
 make lint
-make no-mock-provider-in-server   # fails if the mock provider can reach the server binary
+
+make migrate-new name=add_votes_table
+make migrate-up
+make migrate-down
 ```
 
-That last target is not ceremony. The mock OIDC provider is a separate `main`
-package, so `go list -deps ./cmd/server` does not mention
-`oauth2-proxy/mockoidc` — and if it ever does, the mock identity provider is
-inside the shipped binary. A Dockerfile stage is a convention; an absent import
-is a fact, so the fact is what gets checked.
+Every target derives its ports from `AGENT_SLOT` (default 0), so
+`AGENT_SLOT=1 make dev` runs a second, fully separate stack — own containers,
+own volumes, own ports. That's how several people (or agents) work at once.
+
+| | slot 0 | slot 1 |
+|---|---|---|
+| app | 8080 | 8090 |
+| templ proxy | 7331 | 7341 |
+| postgres | 5433 | 5443 |
+
+---
+
+## Known broken, as of this writing
+
+Be aware of these before you lose an hour to one. Each has an open ticket.
+
+- **`make test` fails without Docker.** The Makefile's bare `export` leaks
+  `TEST_DATABASE_URL` into every recipe, so tests dial a database `make test` never
+  starts. Fix in review. → `nap-gn1`
+- **`make test-integration` selects nothing.** It passes `-tags=integration`, but no
+  file carries that build tag yet. It prints "no tests to run" and exits 0. → `nap-gn1`
+- **`make compose-up` crash-loops.** The base compose stack has no OIDC provider, so
+  the app can't complete startup discovery and restarts forever. Use `make dev`.
+  → `nap-0yg`
+- **`make templ-generate` does nothing inside a git worktree.** It reports
+  `updates=0` and exits 0. `make build` depends on it, so a `.templ` edit can silently
+  fail to take effect. Fine in a normal clone. Fix in review. → `nap-hil`
+- **One test is red on purpose.** `TestSeasonStateTracksLockedAt` asserts a season can
+  be unlocked; migration `00008` forbids it. The test is wrong, not the trigger. Fix in
+  review. → `nap-3wo`
+
+---
+
+## What exists and what doesn't
+
+**Works:** sign-in with a per-season whitelist, submitting films, the 2-per-person cap,
+the slate, validation, theme packs, the schema and its integrity guards.
+
+**Doesn't exist yet:** ranked voting and the instant-runoff tally. That's the whole
+second half. The Gherkin scenarios are written; the implementation isn't.
+
+**Not deployed publicly.** It runs on the home server at `192.168.1.8:3005` on the LAN.
+Going public needs port forwarding and a DNS cutover.
+
+---
+
+## How it's put together
+
+```
+cmd/server/            the binary
+cmd/seed/              dev + test fixtures. Never reachable from the shipped image.
+devtools/mockoidcd/    a real OIDC provider for dev and tests. Also never shipped.
+internal/
+  auth/                OIDC flow: PKCE, state, nonce, token verification
+  signin/              sessions and the whitelist gate
+  store/               sqlc queries + goose migrations
+  web/                 routes, handlers, templates, view models
+  web/board/           the slate and submit handlers
+static/css/base.css    layout and the accessibility floor
+themes/                portal/ and elvira/ — colour, type and copy only
+e2e/                   Playwright, driving a real browser against a real stack
+```
+
+### Two rules worth knowing before you change things
+
+**A theme pack owns colour, type, copy and assets — never layout, never accessibility.**
+`base.css` enforces its floors (16px text, 44px tap targets, visible focus rings,
+reduced motion) inside `@layer nap-enforce` using `max()` against literals, specifically
+so a pack can't lower them. If you find yourself wanting a pack to override a layout
+rule, that's the contract saying no.
+
+**Templates never see database types.** `internal/web/viewmodel` holds plain Go structs;
+handlers fill them, templates render them. A test parses the package's own imports and
+fails if `pgx`, `sqlc` or `store` appears. That seam is what lets the frontend and
+backend move independently.
+
+---
+
+## Tracker
+
+Work is tracked in [beads](https://github.com/gastownhall/beads), in-repo:
+
+```bash
+bd ready --exclude-type=epic   # what's unblocked right now
+bd list --status open
+bd show nap-xxx                # one ticket, with its dependency tree
+bd status                      # counts
+```
