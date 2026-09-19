@@ -95,8 +95,15 @@ Most of the site does not exist yet. The suite reflects that honestly:
 | `ballot.spec.ts` | Skipped — no ticket yet; nap-dph fills these in. |
 
 Every skip is **unconditional and visible**: the reason names the ticket, the
-title carries it too, and the list reporter prints a `-` for it. None of them
-assert nothing and call that green. A conditional skip ("skip if the page is
+title carries it too, and the list reporter prints a `-` for it.
+
+And a body nobody has written yet calls `assertionsNotWrittenYet()` rather than
+standing in a tautology, so **deleting the skip turns the spec red** until real
+assertions replace it. That matters more than it sounds: a stub that asserted
+`expect(page).toBeTruthy()` is skipped and honest today, but it arms a silent
+pass for whoever follows the instruction in the title — the one person most
+likely to trust the result. Unskipping should be the start of the work, not the
+end of it. A conditional skip ("skip if the page is
 missing") would quietly start running the day something answered on that path,
 whatever it answered.
 
@@ -215,8 +222,19 @@ in the tree. Reproduced here — `updates=0`, and a deliberately corrupted
 generated file survived untouched.
 
 `make e2e` therefore runs `e2e-templ-fresh` first, which regenerates with a
-`$(CURDIR)`-anchored pattern and fails if anything changed. Delete it when
-nap-hil lands.
+pattern anchored at this checkout's root, with the root regex-escaped (see the
+note on `TEMPL_IGNORE_E2E` in the Makefile), and fails if anything changed.
+
+Three earlier patterns were tried and the first two each reintroduced the bug
+by another route — dropping the exclusion made templ rewrite every other
+agent's worktree from the main clone; leaving the pattern unanchored meant a
+checkout under an ambient `tmp`, `bin` or `archive` directory matched every
+file. That is the shape of a silent-failure bug: every fix for it is itself
+hard to verify.
+
+Delete the pattern when nap-hil lands. **Keep the guard.** A fix without a
+check just relocates the next occurrence; the pattern is the bug, but the
+absence of a check is why eight of these survived.
 
 ## Debugging a failure
 

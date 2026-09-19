@@ -143,19 +143,41 @@ GOOSE_MIGRATION_DIR := $(MIGRATIONS_DIR)
 WATCH_EXCLUDE_DIRS := archive,worktrees,node_modules,tmp,bin,.git,.beads,testdata
 TEMPL_IGNORE       := (^|/)(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
-# The same list, ANCHORED at this checkout's root.
+# The same list, ANCHORED at this checkout's root, with the root regex-escaped.
 #
-# TEMPL_IGNORE above is unanchored, and templ matches it against ABSOLUTE
-# paths. Inside worktrees/<agent>/ every absolute path contains "/worktrees/",
-# so the pattern matches every file in the tree and templ generates nothing at
-# all while still printing a tick and exiting 0 (ticket nap-hil). Anchoring at
-# $(CURDIR) means "the worktrees directory belonging to THIS checkout", which
-# is the real intent: it still excludes other agents' checkouts from the main
-# clone, and matches nothing inside a worktree, where there are none.
+# templ matches the ignore pattern against ABSOLUTE paths, and TEMPL_IGNORE
+# above is unanchored. Inside worktrees/<agent>/ every absolute path therefore
+# contains "/worktrees/", the pattern matches every file in the tree, and templ
+# generates nothing while printing a tick and exiting 0 (nap-hil).
 #
-# Scoped to the e2e guard below rather than replacing TEMPL_IGNORE, because the
-# shared targets are nap-hil's to change and several agents run them.
-TEMPL_IGNORE_ANCHORED := ^$(CURDIR)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
+# Three fixes were tried before this one, and the first two are instructive
+# because each reintroduced the bug by another route:
+#
+#   - Dropping "worktrees" removes the protection it exists for. The main
+#     clone holds every agent's worktree, so templ would walk into all of them
+#     and rewrite their generated files - and it is not the agent doing it, it
+#     is whoever runs the target in the main clone.
+#   - Anchoring at a bare $(CURDIR) splices a filesystem path into a REGEX.
+#     templ rejects a malformed one loudly (a "++" in the path gives "invalid
+#     nested repetition operator"), so this one is a crash rather than a silent
+#     hole, but a "." in the path still widens the pattern quietly.
+#   - Including "worktrees" only when $(wildcard) finds one keeps the pattern
+#     unanchored, so AMBIENT directory names still match: a checkout under a
+#     directory called tmp, bin, archive or node_modules - a CI runner cloning
+#     into /tmp is the realistic case - matches every file and generates
+#     nothing. Reproduced, with exactly nap-hil's symptom.
+#
+# Anchoring fixes the ambient-name hole and escaping fixes the injection, and
+# only both together fix both. Verified with a repo root at "<tmp>/c++(x)",
+# which has metacharacters and an ambient "tmp" at once.
+#
+# Scoped to the e2e guard rather than replacing TEMPL_IGNORE: that is nap-hil's
+# to change and several agents run the shared targets.
+#
+# (A single quote in the repository path would break the shell quoting below.
+# Nothing else in this Makefile survives that either.)
+TEMPL_ROOT_RE    := $(shell printf '%s' '$(CURDIR)' | sed 's/[][\.^$$*+?(){}|\/]/\\&/g')
+TEMPL_IGNORE_E2E := ^$(TEMPL_ROOT_RE)/(archive|worktrees|node_modules|tmp|bin|\.git)(/|$$)
 
 .DEFAULT_GOAL := help
 
@@ -476,7 +498,7 @@ e2e-env: ## Print the environment the e2e suite runs against
 # nap-hil lands and templ-generate is trustworthy everywhere.
 .PHONY: e2e-templ-fresh
 e2e-templ-fresh: ## Fail if the committed templ output is stale
-	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_ANCHORED)' >/dev/null
+	@$(GO) tool templ generate -path . -ignore-pattern '$(TEMPL_IGNORE_E2E)' >/dev/null
 	@if [ -n "$$(git status --porcelain -- '*_templ.go')" ]; then \
 		echo "" >&2; \
 		echo "The committed templ output was STALE and has been regenerated in place:" >&2; \
