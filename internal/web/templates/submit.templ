@@ -1,0 +1,201 @@
+package templates
+
+// SubmitPage is the form for putting a movie on the board.
+//
+// There are two whole versions of this page and no half-version: either the
+// form is here, or it is not and the page says why. The form is never
+// rendered disabled. A disabled form is something people fill in anyway —
+// they tab into it, they type, and only the submit button tells them no — and
+// on a phone it is not even visibly disabled until you try.
+//
+// Which version to show is SubmitPage.CanSubmit, decided by the handler from
+// the season window, membership and the quota together. This template never
+// assembles that. What it does decide is the wording, in submitBlockedCopy.
+templ SubmitPage(p Submit) {
+	@Layout(p.Layout) {
+		<div class="page-head measure">
+			if label := p.Season.Label(); label != "" {
+				<p class="badge">{ label }</p>
+			}
+			<h1>Put a movie on the board</h1>
+			// The lead is instructions for filling the form in, so it goes
+			// when the form does. A page that explains how to do a thing and
+			// then says you cannot do it is a page that was not read back.
+			if p.CanSubmit && p.Action != "" {
+				<p class="lead">
+					A title is all we need. A trailer link and a line about why
+					you picked it is what makes somebody else rank it first.
+				</p>
+			}
+		</div>
+		if p.CanSubmit && p.Action != "" {
+			@SubmitFormSection(p)
+		} else {
+			@SubmitBlockedSection(p)
+		}
+		if len(p.Existing) > 0 {
+			<section>
+				<h2>{ countOf(len(p.Existing), "film", "films") } from you so far</h2>
+				<ul class="card-grid">
+					for _, movie := range p.Existing {
+						@MovieCardItem(movie)
+					}
+				</ul>
+			</section>
+		}
+	}
+}
+
+// SubmitFormSection is the form itself.
+//
+// Every control is labelled by a real <label for>, described by a hint, and —
+// when it has gone wrong — described by its error too, through
+// aria-describedby. Colour is never the only signal: the message is text,
+// beside the field, in the field's own order.
+//
+// Native validation is left on. base.css styles :user-invalid, which only
+// fires once somebody has actually had a go at a field, so the browser's own
+// check is the first line and the server's is the one that counts. Nothing
+// here depends on JavaScript being present.
+templ SubmitFormSection(p Submit) {
+	{{ fields := newSubmitFields(p.Form) }}
+	<div class="measure">
+		if label := p.Quota.Label(); label != "" {
+			<p class="meta">{ label }</p>
+		}
+		@SubmitErrorSummary(fields)
+		<form method="post" action={ p.Action }>
+			@formRow(fields.Title) {
+				<input
+					type="text"
+					id={ fields.Title.ID }
+					name={ fields.Title.Name }
+					value={ fields.Title.Value }
+					required
+					autocomplete="off"
+					aria-invalid={ fields.Title.AriaInvalid() }
+					aria-describedby={ fields.Title.DescribedBy() }
+				/>
+			}
+			@formRow(fields.Year) {
+				// Text rather than number: the view model keeps what the
+				// person typed, so "nineteen eighty four" has to have
+				// somewhere to go on the way back. inputmode gets the digits
+				// keyboard on a phone without the spinner and the scroll-wheel
+				// accidents that come with type="number".
+				<input
+					type="text"
+					id={ fields.Year.ID }
+					name={ fields.Year.Name }
+					value={ fields.Year.Value }
+					inputmode="numeric"
+					pattern="[0-9]{4}"
+					autocomplete="off"
+					aria-invalid={ fields.Year.AriaInvalid() }
+					aria-describedby={ fields.Year.DescribedBy() }
+				/>
+			}
+			@formRow(fields.TrailerURL) {
+				<input
+					type="url"
+					id={ fields.TrailerURL.ID }
+					name={ fields.TrailerURL.Name }
+					value={ fields.TrailerURL.Value }
+					inputmode="url"
+					autocomplete="off"
+					spellcheck="false"
+					placeholder="https://"
+					aria-invalid={ fields.TrailerURL.AriaInvalid() }
+					aria-describedby={ fields.TrailerURL.DescribedBy() }
+				/>
+			}
+			@formRow(fields.Description) {
+				<textarea
+					id={ fields.Description.ID }
+					name={ fields.Description.Name }
+					rows="4"
+					aria-invalid={ fields.Description.AriaInvalid() }
+					aria-describedby={ fields.Description.DescribedBy() }
+				>{ fields.Description.Value }</textarea>
+			}
+			<div class="form-actions">
+				<button class="btn btn--primary" type="submit">Put it on the board</button>
+				if p.CancelHref != "" {
+					<a class="btn btn--ghost" href={ p.CancelHref }>Cancel</a>
+				}
+			</div>
+		</form>
+	</div>
+}
+
+// SubmitErrorSummary is the list of what needs fixing, above the form.
+//
+// It is what makes a rejected form recoverable for somebody who cannot see the
+// red (WCAG 3.3.1): each entry names its field and links straight to the
+// control, and base.css's :target rule leaves room above it when the link is
+// followed. The summary reads down the form in the form's own order.
+//
+// It renders nothing at all when the form is clean, rather than an empty
+// container, because the container is a child of a .stack and would otherwise
+// take a gap for saying nothing.
+templ SubmitErrorSummary(fields submitFields) {
+	if bad := fields.Invalid(); len(bad) > 0 {
+		<div class="notice notice--error" id="submit-errors" tabindex="-1" role="alert">
+			<div>
+				<p class="mt-0">
+					<strong>{ countOf(len(bad), "thing", "things") } to fix before this goes up.</strong>
+				</p>
+				<ul class="mb-0">
+					for _, field := range bad {
+						<li>
+							<a href={ field.ErrorHref() }>{ field.Label }</a>
+							{ " — " + field.Error }
+						</li>
+					}
+				</ul>
+			</div>
+		</div>
+	}
+}
+
+// SubmitBlockedSection is what the page says in place of the form.
+//
+// It offers the way back to the slate and nothing else. There is deliberately
+// no submit control here in any shape — not greyed out, not "try anyway" —
+// because every one of these cases is a no that the handler has already made
+// and the database would enforce again underneath it.
+templ SubmitBlockedSection(p Submit) {
+	{{ blocked := submitBlockedCopy(p) }}
+	<section class="measure">
+		<h2>{ blocked.Heading }</h2>
+		<p class="lead">{ blocked.Body }</p>
+		if p.CancelHref != "" {
+			<div class="cluster">
+				<a class="btn btn--primary" href={ p.CancelHref }>See what is on the board</a>
+			</div>
+		}
+	</section>
+}
+
+// formRow wraps one control in its label, its hint and its error message.
+//
+// The control itself is the caller's, passed as children, because a year and a
+// description are not the same input and pretending otherwise ends in a
+// configuration struct with eight fields nobody can read. What is shared is
+// the part that has to be identical every time: the label pointing at the
+// control, and the ids the control points back at. See formField.
+//
+// Order in the DOM is order on screen — .field is a column flexbox — so the
+// message appears under the control it is about.
+templ formRow(f formField) {
+	<div class="field">
+		<label for={ f.ID }>{ f.Label }</label>
+		if f.Hint != "" {
+			<p class="field__hint mb-0" id={ f.HintID() }>{ f.Hint }</p>
+		}
+		{ children... }
+		if f.Invalid() {
+			<p class="field__error mb-0" id={ f.ErrorID() }>{ f.Error }</p>
+		}
+	</div>
+}

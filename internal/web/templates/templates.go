@@ -56,6 +56,41 @@ type (
 	FlashLevel = viewmodel.FlashLevel
 )
 
+// The page shapes, named locally for the templates that render them. Aliases
+// again, not copies.
+//
+// The two page types are the one place the naming has to bend. templ compiles
+// a component into a function, so a component called SlatePage and a type
+// called SlatePage cannot both exist in this package. The component keeps the
+// name — SlatePage is what a handler calls and what every other page template
+// here is named like — and the type is shortened, which is why these read
+// `templ SlatePage(p Slate)`.
+type (
+	// Slate is the slate page's data. See viewmodel.SlatePage.
+	Slate = viewmodel.SlatePage
+
+	// Submit is the submit page's data. See viewmodel.SubmitPage.
+	Submit = viewmodel.SubmitPage
+
+	// MovieCard is one submission as a card. See viewmodel.MovieCard.
+	MovieCard = viewmodel.MovieCard
+
+	// SubmitForm is the form's values and errors. See viewmodel.SubmitForm.
+	SubmitForm = viewmodel.SubmitForm
+
+	// SubmitQuota is a viewer's allowance. See viewmodel.SubmitQuota.
+	SubmitQuota = viewmodel.SubmitQuota
+
+	// SeasonSummary is the season a page is about. See viewmodel.SeasonSummary.
+	SeasonSummary = viewmodel.SeasonSummary
+
+	// SeasonResult is a locked season's outcome. See viewmodel.SeasonResult.
+	SeasonResult = viewmodel.SeasonResult
+
+	// FieldErrors is a form's validation messages. See viewmodel.FieldErrors.
+	FieldErrors = viewmodel.FieldErrors
+)
+
 // The theme defaults, re-exported so a caller reaching for templates.Theme
 // does not have to import two packages to fill it in.
 const (
@@ -71,6 +106,17 @@ const (
 	FlashWarning = viewmodel.FlashWarning
 	FlashError   = viewmodel.FlashError
 )
+
+// countOf renders a count with the right noun: "1 film", "6 films". It is the
+// smallest piece of copy on the site and the easiest one to get wrong, so it
+// is written once here rather than at each of the three call sites.
+func countOf(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+
+	return strconv.Itoa(n) + " " + many
+}
 
 // isCurrent reports whether a nav item points at the page being rendered.
 func isCurrent(p Page, item NavItem) bool {

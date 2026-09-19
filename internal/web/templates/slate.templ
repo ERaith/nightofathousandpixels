@@ -1,0 +1,174 @@
+package templates
+
+// SlatePage is the board: every live submission for a season, and what this
+// particular viewer can do about it.
+//
+// One template serves all four season states, because a draft season and an
+// empty October morning are not different pages — they are this page with no
+// movies on it. See EmptySlate, which is the state most people will see most
+// often and the one that has to look deliberate.
+//
+// Nothing here decides anything. Whether to offer the submit control is
+// SlatePage.CanSubmit, which the handler worked out from the season window,
+// membership and the quota together. When it is false there is no control at
+// all rather than a disabled one: a button that exists in order to be refused
+// is worse than no button, and on a touch screen it is not even obviously
+// refused.
+templ SlatePage(p Slate) {
+	@Layout(p.Layout) {
+		<div class="page-head measure">
+			if label := p.Season.State.Label(); label != "" {
+				<p class="badge badge--accent">{ label }</p>
+			}
+			<h1>{ slateHeading(p.Season) }</h1>
+			if summary := p.Season.State.Summary(); summary != "" {
+				<p class="lead">{ summary }</p>
+			}
+		</div>
+		if p.Result != nil {
+			@SeasonOutcome(*p.Result)
+		}
+		// A tallied season is already dated by the outcome above, and in
+		// practice locked_at and tallied_at are minutes apart. Printing
+		// "Locked" under "Counted" with what looks like the same timestamp in
+		// both reads as a glitch rather than as two facts.
+		if p.Result == nil {
+			if date := seasonNextDate(p.Season); date.Set() {
+				<div class="measure">
+					<p class="meta mb-0">{ date.Label }</p>
+					<p class="countdown mb-0">{ date.Value }</p>
+				</div>
+			}
+		}
+		// An empty board carries its own invitation, so the action strip
+		// stands down for it. Two primary buttons a thumb apart, both going
+		// to the same place, is not twice the invitation — it reads as a page
+		// that was assembled rather than written.
+		if p.HasMovies() {
+			@SlateActions(p)
+		}
+		<section>
+			if p.HasMovies() {
+				<h2>{ countOf(p.MovieCount(), "film", "films") } on the board</h2>
+				if p.ShowingHidden {
+					// An admin list that quietly contains withdrawn films,
+					// with no note that it does, is how a hidden film gets
+					// believed to be public.
+					<div class="notice notice--warn" role="status">
+						<p class="mb-0">
+							<strong>Heads up:</strong>
+							{ " " }
+							This list includes withdrawn submissions, marked as such.
+							Nobody else sees them.
+						</p>
+					</div>
+				}
+				<ul class="card-grid">
+					for _, movie := range p.Movies {
+						@MovieCardItem(movie)
+					}
+				</ul>
+			} else {
+				@EmptySlate(p)
+			}
+		</section>
+	}
+}
+
+// EmptySlate is the morning of 1 October.
+//
+// It is the most-seen state of the whole site: the link hits the group chat,
+// thirty people open it at once, and there is nothing on the board because
+// nobody has submitted yet. A bare "no movies yet" reads as a page that failed
+// to load, and the fix for that is not a nicer shade of grey — it is naming
+// the thing the visitor is supposed to do and putting it under their thumb.
+//
+// The button is the same CanSubmit decision as everywhere else. A visitor who
+// cannot submit gets the reason and, when they are simply signed out, the way
+// in — because "sign in" is the actual next step for most of the people who
+// will see this page before they have ever signed in.
+templ EmptySlate(p Slate) {
+	<div class="empty">
+		<h2 class="mt-0">Nobody has gone first yet</h2>
+		<p class="measure centered">
+			Every year starts here. Whoever puts the first film up sets the
+			tone for the whole night, and everyone else picks around it.
+		</p>
+		if p.CanSubmit && p.SubmitHref != "" {
+			<p>
+				<a class="btn btn--primary" href={ p.SubmitHref }>Be the first</a>
+			</p>
+		} else if p.Layout.SignInHref != "" {
+			<p>
+				<a class="btn btn--primary" href={ p.Layout.SignInHref }>Sign in to be the first</a>
+			</p>
+		}
+		if label := p.Quota.Label(); label != "" {
+			<p class="meta mb-0">{ label }</p>
+		}
+	</div>
+}
+
+// SlateActions is the strip between the season and the board: the submit
+// control, or the reason there isn't one.
+//
+// The reason is SubmitQuota.Label, which is written for each case rather than
+// shared — "You can vote this year, but not put films on the board" for a
+// member whose limit is an explicit zero, "You have used all 2 picks for this
+// year" for one who spent them. They are different facts about different
+// people and they need different sentences: one is a setting somebody chose,
+// the other is progress the viewer made.
+templ SlateActions(p Slate) {
+	if p.CanSubmit && p.SubmitHref != "" {
+		<div class="cluster">
+			<a class="btn btn--primary" href={ p.SubmitHref }>Put a movie up</a>
+			if label := p.Quota.Label(); label != "" {
+				<p class="meta mb-0">{ label }</p>
+			}
+		</div>
+	} else if label := p.Quota.Label(); label != "" {
+		<div class="notice" role="status">
+			<p class="mb-0">{ label }</p>
+		</div>
+	} else if p.Layout.SignInHref != "" {
+		// No quota at all and a way in: signed out. The films are public to
+		// read; adding one is not.
+		<div class="cluster">
+			<a class="btn btn--ghost" href={ p.Layout.SignInHref }>Sign in to add yours</a>
+			<p class="meta mb-0">Anyone can read the board. Only this year's group can add to it.</p>
+		</div>
+	}
+}
+
+// SeasonOutcome is the result of a locked season.
+//
+// A tie is a real outcome, not an error: result.winner_movie_id is nullable
+// for exactly this case, and the page says so in words rather than showing an
+// empty winner. A blank winner title with Tied false would be a bug upstream,
+// and it renders as the tie rather than as "The winner: ." — the failure mode
+// of being slightly vague beats the failure mode of looking broken.
+templ SeasonOutcome(r SeasonResult) {
+	if r.Tied || r.WinnerTitle == "" {
+		<div class="notice notice--warn" role="status">
+			<p class="mb-0">
+				<strong>It tied.</strong>
+				{ " " }
+				The last round of the count came out level, so no single film won outright.
+				if label := r.TalliedLabel(); label != "" {
+					{ " Counted " + label + "." }
+				}
+			</p>
+		</div>
+	} else {
+		<div class="notice notice--ok" role="status">
+			<p class="mb-0">
+				<strong>The winner:</strong>
+				{ " " }
+				{ r.WinnerTitle }.
+				if label := r.TalliedLabel(); label != "" {
+					{ " Counted " + label + "." }
+				}
+			</p>
+		</div>
+	}
+}
