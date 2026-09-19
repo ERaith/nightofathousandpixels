@@ -156,6 +156,14 @@ func countInt(t *testing.T, ctx context.Context, tx pgx.Tx, sql string, args ...
 // paths out of season cannot matter. Everything below is a consequence of
 // this, which is why it is asserted directly from the catalog: a behavioural
 // test could pass by luck of ordering, this one cannot.
+//
+// It reads pg_trigger, not pg_constraint.condeferred, and that distinction is
+// the whole point of the test. Postgres accepts
+// `ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`, stores condeferred =
+// true for it, and then builds the delete trigger non-deferrable anyway. A
+// test asserting pg_constraint would pass against that silently downgraded
+// constraint; this one fails, which is what stops someone "tidying" NO ACTION
+// into RESTRICT and quietly reintroducing nap-jri.
 func TestMovieForeignKeysAreDeferred(t *testing.T) {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, testDSN(t))
@@ -165,18 +173,90 @@ func TestMovieForeignKeysAreDeferred(t *testing.T) {
 	defer func() { _ = conn.Close(context.Background()) }()
 
 	for _, name := range []string{"ballot_entry_movie_fkey", "result_winner_movie_fkey"} {
-		var deferrable, deferred bool
-		err := conn.QueryRow(ctx,
-			`SELECT condeferrable, condeferred FROM pg_constraint WHERE conname = $1`,
-			name).Scan(&deferrable, &deferred)
+		rows, err := conn.Query(ctx, `
+			SELECT t.tgname, t.tgrelid::regclass::text, t.tgdeferrable, t.tginitdeferred
+			  FROM pg_constraint c
+			  JOIN pg_trigger t ON t.tgconstraint = c.oid
+			 WHERE c.conname = $1
+			 ORDER BY t.tgname`, name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if !deferrable || !deferred {
-			t.Errorf("%s: deferrable=%v deferred=%v, want both true -- "+
-				"DELETE FROM season is back to depending on constraint OID order",
-				name, deferrable, deferred)
+		var n int
+		for rows.Next() {
+			var tg, tbl string
+			var deferrable, deferred bool
+			if err := rows.Scan(&tg, &tbl, &deferrable, &deferred); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			n++
+			if !deferrable || !deferred {
+				t.Errorf("%s: trigger %s on %s is deferrable=%v initdeferred=%v, want both true -- "+
+					"the deferral was silently downgraded and DELETE FROM season "+
+					"depends on constraint OID order again",
+					name, tg, tbl, deferrable, deferred)
+			}
 		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if n == 0 {
+			t.Errorf("%s: no referential integrity triggers found", name)
+		}
+	}
+}
+
+// TestRestrictDeferrableIsSilentlyDowngraded documents the trap the test above
+// exists to catch, by building it on the live server rather than trusting a
+// comment. If a future Postgres ever stops downgrading RESTRICT, this fails
+// and the warning in 00008 can be relaxed.
+func TestRestrictDeferrableIsSilentlyDowngraded(t *testing.T) {
+	ctx, tx := openTx(t)
+
+	if _, err := tx.Exec(ctx, `
+		CREATE TABLE trap_parent (id int PRIMARY KEY);
+		CREATE TABLE trap_no_action (p_id int, CONSTRAINT trap_na_fk FOREIGN KEY (p_id)
+			REFERENCES trap_parent (id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED);
+		CREATE TABLE trap_restrict (p_id int, CONSTRAINT trap_r_fk FOREIGN KEY (p_id)
+			REFERENCES trap_parent (id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED);
+	`); err != nil {
+		t.Fatalf("build the trap: %v", err)
+	}
+
+	// Both constraints claim to be deferred.
+	for _, name := range []string{"trap_na_fk", "trap_r_fk"} {
+		var deferred bool
+		if err := tx.QueryRow(ctx,
+			`SELECT condeferred FROM pg_constraint WHERE conname = $1`, name).Scan(&deferred); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !deferred {
+			t.Errorf("%s: pg_constraint.condeferred = false, expected the catalog to claim a deferral", name)
+		}
+	}
+
+	// Only one of them actually is. The delete-side triggers live on the
+	// referenced table, which is where the downgrade shows up.
+	deferredTriggers := func(constraint string) (deferred, total int) {
+		t.Helper()
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FILTER (WHERE t.tgdeferrable AND t.tginitdeferred), count(*)
+			  FROM pg_constraint c
+			  JOIN pg_trigger t ON t.tgconstraint = c.oid
+			 WHERE c.conname = $1 AND t.tgrelid = 'trap_parent'::regclass`,
+			constraint).Scan(&deferred, &total); err != nil {
+			t.Fatalf("%s: %v", constraint, err)
+		}
+		return deferred, total
+	}
+
+	if d, total := deferredTriggers("trap_na_fk"); d != total {
+		t.Errorf("NO ACTION: %d of %d triggers deferred, want all of them", d, total)
+	}
+	if d, total := deferredTriggers("trap_r_fk"); d == total {
+		t.Errorf("RESTRICT: all %d triggers deferred -- Postgres no longer downgrades it, "+
+			"so the warning in 00008_integrity_guards.sql is now out of date", total)
 	}
 }
 
@@ -477,6 +557,132 @@ func TestDeleteSeasonUnderAdverseOrderWithGuards(t *testing.T) {
 		if n := countInt(t, ctx, tx, `SELECT count(*) FROM `+tbl); n != 0 {
 			t.Errorf("%s left %d rows", tbl, n)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unlocking must not be the way around the guard.
+// ---------------------------------------------------------------------------
+
+// TestLockedSeasonCannotBeUnlocked: once `locked` is what protects the data,
+// moving a season out of it has to be as hard as editing the data directly.
+func TestLockedSeasonCannotBeUnlocked(t *testing.T) {
+	for _, state := range []string{"draft", "submitting", "voting"} {
+		t.Run("to "+state, func(t *testing.T) {
+			ctx, tx := seeded(t)
+			_, err := tx.Exec(ctx,
+				`UPDATE season SET state = $1, locked_at = NULL WHERE id = $2`,
+				state, lockedSeason)
+			if err == nil {
+				t.Fatal("a locked season was unlocked by a plain UPDATE")
+			}
+			if got := sqlstate(err); got != lockedSeasonErrCode {
+				t.Errorf("SQLSTATE = %q, want %q: %v", got, lockedSeasonErrCode, err)
+			}
+		})
+	}
+}
+
+// TestUnlockBypassIsClosed runs the actual attack rather than its first step:
+// unlock the season, remove the member whose ballots you want gone, lock it
+// again. Before the unlock guard every statement here succeeded and the
+// locked-season delete guard never fired once.
+func TestUnlockBypassIsClosed(t *testing.T) {
+	ctx, tx := seeded(t)
+
+	before := countInt(t, ctx, tx,
+		`SELECT count(*) FROM ballot_entry WHERE season_id = $1`, lockedSeason)
+
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	if _, err := sp.Exec(ctx,
+		`UPDATE season SET state = 'voting', locked_at = NULL WHERE id = $1`,
+		lockedSeason); err == nil {
+		t.Fatal("step 1 of the bypass (unlock) succeeded")
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback to savepoint: %v", err)
+	}
+
+	if after := countInt(t, ctx, tx,
+		`SELECT count(*) FROM ballot_entry WHERE season_id = $1`, lockedSeason); after != before {
+		t.Errorf("locked ballots = %d, want %d", after, before)
+	}
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM season WHERE id = $1`, lockedSeason).Scan(&state); err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if state != "locked" {
+		t.Errorf("season state = %q, want locked", state)
+	}
+}
+
+// TestDeliberateUnlockIsPossible: the guard is a lock, not a weld. A season
+// locked by mistake has to be recoverable without shipping a migration, and
+// the escape hatch has to be something no generated query does by accident.
+func TestDeliberateUnlockIsPossible(t *testing.T) {
+	ctx, tx := seeded(t)
+
+	if _, err := tx.Exec(ctx, `SET LOCAL nap.allow_unlock = 'on'`); err != nil {
+		t.Fatalf("set the escape hatch: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE season SET state = 'voting', locked_at = NULL WHERE id = $1`,
+		lockedSeason); err != nil {
+		t.Fatalf("deliberate unlock: %v", err)
+	}
+
+	// And the season is now genuinely editable, which is the point of asking.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM season_member WHERE season_id = $1 AND person_id = $2`,
+		lockedSeason, bob); err != nil {
+		t.Fatalf("editing the unlocked season: %v", err)
+	}
+}
+
+// TestLockingASeasonStillWorks: the guard refuses to leave 'locked', not to
+// reach it.
+func TestLockingASeasonStillWorks(t *testing.T) {
+	ctx, tx := seeded(t)
+	if _, err := tx.Exec(ctx,
+		`UPDATE season SET state = 'locked', locked_at = now() WHERE id = $1`,
+		liveSeason); err != nil {
+		t.Fatalf("locking a season: %v", err)
+	}
+}
+
+// TestNonLockedSeasonDeleteOnAdverseOrder is the combination the Lead called
+// out: both fixes in place, adverse constraint order, and the season being
+// deleted is the live one -- so the locked-season guard is live on the other
+// year's rows while this cascade runs.
+func TestNonLockedSeasonDeleteOnAdverseOrder(t *testing.T) {
+	ctx, tx := openTx(t)
+	if _, err := tx.Exec(ctx, adverseOrderSQL); err != nil {
+		t.Fatalf("rebuild constraints in restore order: %v", err)
+	}
+	assertAdverseOrder(t, ctx, tx)
+	seed(t, ctx, tx)
+
+	tag, err := tx.Exec(ctx, `DELETE FROM season WHERE id = $1`, liveSeason)
+	if err != nil {
+		t.Fatalf("deleting the non-locked season: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("deleted %d seasons, want 1", tag.RowsAffected())
+	}
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+		t.Fatalf("deferred checks failed: %v", err)
+	}
+	if n := countInt(t, ctx, tx,
+		`SELECT count(*) FROM ballot_entry WHERE season_id = $1`, liveSeason); n != 0 {
+		t.Errorf("%d live ballots survived", n)
+	}
+	// The locked year is untouched and still guarded.
+	if n := countInt(t, ctx, tx,
+		`SELECT count(*) FROM ballot_entry WHERE season_id = $1`, lockedSeason); n != 3 {
+		t.Errorf("locked ballots = %d, want 3", n)
 	}
 }
 

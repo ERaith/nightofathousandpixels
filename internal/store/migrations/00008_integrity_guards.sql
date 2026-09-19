@@ -1,6 +1,7 @@
 -- +goose Up
--- Two integrity holes in the v1 schema, both about deletion. Neither changes
--- any table's column shape, so sqlc's generated output is untouched.
+-- Three integrity holes in the v1 schema: two about deletion, and the one that
+-- would otherwise let you walk around the second. None of them changes any
+-- table's column shape, so sqlc's generated output is untouched.
 --
 -- Correction to a comment in 00005_ballot_entry.sql, which this migration
 -- supersedes: that comment says RESTRICT is checked per row while NO ACTION is
@@ -32,7 +33,21 @@
 --
 -- Making the two movie-referencing constraints DEFERRABLE INITIALLY DEFERRED
 -- moves the check to COMMIT, after every cascade has run, so the order stops
--- mattering. The protection this constraint exists for is unaffected: a bare
+-- mattering.
+--
+-- ON DELETE NO ACTION is load-bearing and must not be "tidied" to RESTRICT.
+-- Postgres accepts `RESTRICT ... DEFERRABLE INITIALLY DEFERRED`, records
+-- condeferred = true for it, and then silently builds the delete trigger
+-- non-deferrable anyway -- so the catalog and \d both claim a deferral that
+-- does not exist, and the behaviour is unchanged. Measured on 16.15:
+--
+--   conname   con_deferred   trigger deferrable / initdeferred
+--   c_na_fk   t              t / t     <- NO ACTION, really deferred
+--   c_r_fk    t              f / f     <- RESTRICT, silently downgraded
+--
+-- The only place the downgrade is visible is pg_trigger, which is why the
+-- regression test asserts tgdeferrable and tginitdeferred rather than
+-- pg_constraint.condeferred. The protection this constraint exists for is unaffected: a bare
 -- `DELETE FROM movie` that a ballot ranked still fails, just at COMMIT rather
 -- than at the statement -- soft-delete with hidden = true is still the only
 -- way to take a ranked movie out of the running.
@@ -143,7 +158,71 @@ CREATE TRIGGER result_locked_season_guard
     BEFORE DELETE ON result
     FOR EACH ROW EXECUTE FUNCTION nap_reject_locked_season_delete();
 
+-- ---------------------------------------------------------------------------
+-- 3. Unlocking must not be the way around part 2.
+-- ---------------------------------------------------------------------------
+-- Nothing constrains the direction of season.state, so
+-- `UPDATE season SET state = 'draft', locked_at = NULL` has always been
+-- possible. While `locked` only drove the UI that was untidy and no worse.
+-- Part 2 makes `locked` load-bearing for data protection, and that turns the
+-- same statement into the bypass: unlock, remove the member, relock, and the
+-- guard above never fires once. A lock is not a lock if the key is taped to
+-- it, so the two changes have to ship together.
+--
+-- A locked season therefore cannot move to any other state. The escape hatch
+-- is a session setting rather than nothing at all, because a season locked by
+-- mistake has to be recoverable without shipping a migration -- but it has to
+-- be asked for by name, in the same transaction, which no generated query or
+-- stray UPDATE will do by accident:
+--
+--     BEGIN;
+--     SET LOCAL nap.allow_unlock = 'on';
+--     UPDATE season SET state = 'voting', locked_at = NULL WHERE year = 2025;
+--     COMMIT;
+--
+-- Locking is unaffected: this only refuses to leave 'locked'. Clearing
+-- locked_at while staying locked is already impossible, because 00002's
+-- season_locked_has_timestamp ties the two together.
+
+-- +goose StatementBegin
+CREATE FUNCTION nap_reject_season_unlock() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.state = 'locked'
+       AND NEW.state IS DISTINCT FROM 'locked'
+       AND current_setting('nap.allow_unlock', true) IS DISTINCT FROM 'on'
+    THEN
+        RAISE EXCEPTION 'cannot unlock season %', OLD.year
+            USING ERRCODE = 'NAPLK',
+                  DETAIL  = format(
+                      'Season %s is locked. Unlocking it would also lift the '
+                      'guard on its ballots, roster, slate and result.',
+                      OLD.year),
+                  HINT    = 'If this is deliberate, run '
+                            'SET LOCAL nap.allow_unlock = ''on'' in the same '
+                            'transaction as the update.';
+    END IF;
+
+    RETURN NEW;
+END $$;
+-- +goose StatementEnd
+
+COMMENT ON FUNCTION nap_reject_season_unlock() IS
+    'Refuses to move a season out of the locked state, so that unlocking '
+    'cannot be used to step around nap_reject_locked_season_delete. Raises '
+    'SQLSTATE NAPLK. Escape hatch: SET LOCAL nap.allow_unlock = ''on''.';
+
+-- UPDATE OF state, not a bare UPDATE: state cannot change unless it is
+-- assigned, so this fires exactly when it could matter and leaves every other
+-- edit to a season alone.
+CREATE TRIGGER season_no_unlock_guard
+    BEFORE UPDATE OF state ON season
+    FOR EACH ROW EXECUTE FUNCTION nap_reject_season_unlock();
+
 -- +goose Down
+DROP TRIGGER season_no_unlock_guard            ON season;
+DROP FUNCTION nap_reject_season_unlock();
+
 DROP TRIGGER result_locked_season_guard        ON result;
 DROP TRIGGER movie_locked_season_guard         ON movie;
 DROP TRIGGER season_member_locked_season_guard ON season_member;
