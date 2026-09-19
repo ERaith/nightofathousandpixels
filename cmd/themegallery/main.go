@@ -39,6 +39,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/theme"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
@@ -49,6 +50,10 @@ func main() {
 	addr := flag.String("addr", ":8240", "address to listen on")
 	themesDir := flag.String("themes", "themes", "directory of theme packs")
 	staticDir := flag.String("static", "static", "directory served under /static/")
+	// The pack every bare URL renders in, so a link to /gallery/slate/empty can
+	// be handed to somebody without a query string hanging off it. ?theme= still
+	// overrides it on any page, which is how you compare two packs.
+	defaultPack := flag.String("theme", "", "pack every page renders in unless ?theme= says otherwise")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -58,22 +63,30 @@ func main() {
 		log.Fatalf("themegallery: load %s: %v", *themesDir, err)
 	}
 
+	if *defaultPack != "" && *defaultPack != theme.PreviewNone {
+		if _, ok := packs.Lookup(*defaultPack); !ok {
+			log.Fatalf("themegallery: no pack named %q in %s (have %v)", *defaultPack, *themesDir, packs.Names())
+		}
+	}
+
 	site := web.New(web.Options{
 		StaticDir: *staticDir,
 		Themes:    packs,
+		Pack:      *defaultPack,
 		Nav:       galleryNav(),
 		// Anyone, because there is nobody else here. The real server wires
 		// this to season_member.is_admin.
 		ThemePreview: theme.Anyone,
 	})
 
-	g := &gallery{packs: packs}
+	g := &gallery{packs: packs, defaultPack: *defaultPack}
 
 	r := chi.NewRouter()
 	g.mount(r)
 	site.Routes(r)
 
-	fmt.Fprintf(os.Stderr, "themegallery on http://localhost%s/gallery  (packs: %v)\n", *addr, packs.Names())
+	fmt.Fprintf(os.Stderr, "themegallery on http://localhost%s/gallery  (showing: %s, available: %v)\n",
+		*addr, orNone(*defaultPack), packs.Names())
 
 	server := &http.Server{Addr: *addr, Handler: r, ReadHeaderTimeout: 0}
 	if err := server.ListenAndServe(); err != nil {
@@ -84,6 +97,19 @@ func main() {
 // gallery mounts one URL per page state.
 type gallery struct {
 	packs *theme.Registry
+
+	// defaultPack is what a URL with no ?theme= renders in. Blank is the
+	// unthemed site, which is the right default for comparing two packs and
+	// the wrong one for showing somebody the pack that was chosen.
+	defaultPack string
+}
+
+func orNone(pack string) string {
+	if pack == "" {
+		return "no pack"
+	}
+
+	return pack
 }
 
 // shell is the per-request bits every fixture page needs on its LayoutData: the
@@ -128,9 +154,19 @@ func submitPage(f func() viewmodel.SubmitPage) func(shell) templ.Component {
 	}
 }
 
+// shellPage is for the pages that are only a shell plus their own content:
+// the error pages and the sign-in flow's.
+//
+// It drops the fixture's flashes and its title. Those belong to the slate and
+// submit story the fixture was written for, and "Done: The Thing is on the
+// board" sitting above "You're not on the list yet" is a sentence pair that
+// could not happen and that somebody judging a pack would have to stop and
+// discount.
 func shellPage(f func(templates.Page) templ.Component) func(shell) templ.Component {
 	return func(s shell) templ.Component {
 		p := viewmodel.FixtureLayout()
+		p.Flashes = nil
+		p.Title = ""
 		s.apply(&p)
 
 		return f(p)
@@ -162,6 +198,21 @@ func entries() []entry {
 			return templates.ErrorPage(p, templates.MethodNotAllowedContent)
 		})},
 		{"/gallery/error/500", "500.", shellPage(templates.ServerErrorPage)},
+
+		// The sign-in flow's own pages. Their copy lives in
+		// internal/signin/pages.templ as literals rather than as copy keys, so
+		// they take the pack's palette and type and keep the base voice — see
+		// nap-n6f. On the not-on-the-list page that is arguably the right
+		// answer anyway: it is the one page where a real person is being told
+		// they are not on a list, possibly with friends looking over their
+		// shoulder, and it is no place for a joke.
+		{"/gallery/signin/not-on-the-list", "Sign-in — signed in, not on this year's list.", shellPage(func(p templates.Page) templ.Component {
+			return signin.NotOnTheListPage(p, "wrong.account@work.example", 2026)
+		})},
+		{"/gallery/signin/no-season", "Sign-in — no season is open.", shellPage(signin.NoSeasonPage)},
+		{"/gallery/signin/collision", "Sign-in — that address already belongs to another account.", shellPage(func(p templates.Page) templ.Component {
+			return signin.IdentityCollisionPage(p, "siobhan.odoherty@example.com")
+		})},
 	}
 }
 
@@ -179,13 +230,13 @@ func (g *gallery) preview(h http.HandlerFunc) http.HandlerFunc {
 
 // render turns a fixture renderer into a handler.
 //
-// With no ?theme=, the shell gets the zero Theme — the unthemed site — rather
-// than a default pack. The gallery has no season and therefore no theme of its
-// own, and defaulting to one of the two packs under judgement would put a thumb
-// on the scale.
+// With no ?theme=, the shell gets whatever -theme was started with, which is
+// nothing unless somebody said otherwise. Comparing two packs wants a neutral
+// default; showing somebody the pack that was chosen wants a URL with no query
+// string on it. The flag is which of those this run is for.
 func (g *gallery) render(f func(shell) templ.Component) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		s := shell{path: req.URL.Path}
+		s := shell{path: req.URL.Path, theme: g.packs.Theme(g.defaultPack)}
 		if t, ok := theme.PreviewedTheme(req.Context()); ok {
 			s.theme = t
 		}
