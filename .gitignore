@@ -58,3 +58,7 @@ prisma/*.db-journal
 
 # agent worktrees
 worktrees/
+
+# go build artifacts
+bin/
+tmp/
