@@ -12,6 +12,7 @@
 // Needs: nap-9jw (a session), nap-ibx (the submit handler), nap-4l9 (the form).
 
 import { expect, test } from "@playwright/test";
+import { assertionsNotWrittenYet } from "../lib/unwritten";
 
 const NEEDS_FORM = "nap-4l9: the submit form template does not exist; /submit is a 404";
 const NEEDS_HANDLER = "nap-ibx + nap-623: there is no submit handler and no two-per-person cap";
@@ -31,27 +32,25 @@ test.describe("submitting a movie", () => {
     await expect(page.getByText("Predator")).toBeVisible();
   });
 
-  test("the second submission is accepted [skipped until nap-4l9]", async ({ page }) => {
+  test("the second submission is accepted [skipped until nap-4l9]", async () => {
     test.skip(true, NEEDS_FORM);
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_FORM);
   });
 
-  test("a third submission is refused by the two-per-person cap [skipped until nap-ibx]", async ({
-    page,
-  }) => {
+  test("a third submission is refused by the two-per-person cap [skipped until nap-ibx]", async () => {
     test.skip(true, NEEDS_HANDLER);
 
     // The cap is the interesting one: it has to hold against a form submitted
     // twice quickly, not only against a form that is politely disabled, so
     // this will eventually post directly rather than clicking.
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_HANDLER);
   });
 
-  test("the form works on a 320px phone [skipped until nap-4l9]", async ({ page }) => {
+  test("the form works on a 320px phone [skipped until nap-4l9]", async () => {
     test.skip(true, NEEDS_FORM);
 
     // Most voters submit from a phone, and a form is where a layout that only
     // works at 1280px actually stops people.
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_FORM);
   });
 });

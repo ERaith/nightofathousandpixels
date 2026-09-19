@@ -15,6 +15,7 @@ import { expect, test } from "@playwright/test";
 import * as fs from "node:fs";
 
 import { harnessStatePath, type HarnessState } from "../lib/stack";
+import { assertionsNotWrittenYet } from "../lib/unwritten";
 
 function harnessState(): HarnessState {
   return JSON.parse(fs.readFileSync(harnessStatePath, "utf8")) as HarnessState;
@@ -59,14 +60,13 @@ test.describe("sign-in", () => {
     expect(cookies.some((c) => c.httpOnly)).toBe(true);
   });
 
-  test("is refused for an address that is not on the season whitelist [skipped until nap-l1i]", async ({
-    page,
-  }) => {
-    test.skip(true, "nap-l1i: there is no whitelist check, and no page that reports being refused");
+  test("is refused for an address that is not on the season whitelist [skipped until nap-l1i]", async () => {
+    const reason = "nap-l1i: there is no whitelist check, and no page that reports being refused";
+    test.skip(true, reason);
 
     // queueUser({ subject: "stranger", email: "not-invited@example.test" });
     // await page.goto("/auth/login");
     // await expect(page.getByText(/not on the list/i)).toBeVisible();
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(reason);
   });
 });

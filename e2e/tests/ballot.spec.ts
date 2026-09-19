@@ -10,6 +10,7 @@
 // nap-dph (G4 E2E journeys) is the ticket that fills these in.
 
 import { expect, test } from "@playwright/test";
+import { assertionsNotWrittenYet } from "../lib/unwritten";
 
 const NEEDS_BALLOT = "no ticket yet: there is no ballot page, handler or tally endpoint";
 
@@ -22,19 +23,19 @@ test.describe("the ballot", () => {
     await page.goto("/ballot");
     // Ranking is the one interaction on this site that is genuinely awkward on
     // a phone, so this test matters most in the mobile project.
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_BALLOT);
   });
 
-  test("a voter changes a ballot already cast [skipped until nap-dph]", async ({ page }) => {
+  test("a voter changes a ballot already cast [skipped until nap-dph]", async () => {
     test.skip(true, NEEDS_BALLOT);
 
     // Changing a ballot is the case that catches an INSERT where an UPSERT was
     // meant: the second ballot must replace the first, not add to it.
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_BALLOT);
   });
 
-  test("the same movie cannot be ranked twice [skipped until nap-dph]", async ({ page }) => {
+  test("the same movie cannot be ranked twice [skipped until nap-dph]", async () => {
     test.skip(true, NEEDS_BALLOT);
-    expect(page).toBeTruthy();
+    assertionsNotWrittenYet(NEEDS_BALLOT);
   });
 });
