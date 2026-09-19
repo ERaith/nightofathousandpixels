@@ -65,6 +65,14 @@ var (
 
 	// ErrNoEmail means the ID token carried no email claim.
 	ErrNoEmail = errors.New("auth: id token contained no email claim")
+
+	// ErrNoSubject means the ID token carried no sub claim. OIDC requires one,
+	// but go-oidc does not enforce it: Verify copies whatever is there, so an
+	// absent sub yields an empty string rather than an error. An empty subject
+	// must never reach the database - person.google_sub is UNIQUE, so the
+	// first empty-subject row would silently become the account that every
+	// later subject-less sign-in matches.
+	ErrNoSubject = errors.New("auth: id token contained no sub claim")
 )
 
 const (
@@ -379,6 +387,11 @@ func identityFrom(idToken *oidc.IDToken) (*Identity, error) {
 		return nil, fmt.Errorf("auth: decode id token claims: %w", err)
 	}
 
+	subject := strings.TrimSpace(idToken.Subject)
+	if subject == "" {
+		return nil, ErrNoSubject
+	}
+
 	email := strings.TrimSpace(claims.Email)
 	if email == "" {
 		return nil, ErrNoEmail
@@ -391,7 +404,7 @@ func identityFrom(idToken *oidc.IDToken) (*Identity, error) {
 	}
 
 	return &Identity{
-		Subject:       idToken.Subject,
+		Subject:       subject,
 		Email:         email,
 		EmailVerified: true,
 		Name:          strings.TrimSpace(claims.Name),

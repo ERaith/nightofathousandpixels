@@ -683,3 +683,26 @@ func tamperCiphertext(t *testing.T, value string) string {
 	}
 	return out
 }
+
+// TestMissingSubjectRejected: OIDC requires a sub claim, but go-oidc does not
+// enforce it - Verify copies an absent sub through as an empty string. Since
+// person.google_sub is UNIQUE, letting an empty subject out of this package
+// would mean the first subject-less sign-in creates a row that every later
+// subject-less sign-in then matches.
+func TestMissingSubjectRejected(t *testing.T) {
+	t.Parallel()
+
+	m := startMock(t)
+	m.QueueUser(claimUser{subject: "", email: "nosub@example.test", emailVerified: true})
+	a := newAuthenticator(t, m, testOrigin)
+
+	authURL, cookie := begin(t, a)
+	id, err := callback(t, a, authorize(t, authURL), cookie)
+	if !errors.Is(err, ErrNoSubject) {
+		t.Fatalf("err = %v, want ErrNoSubject", err)
+	}
+	if id != nil {
+		t.Errorf("identity returned with no subject: %+v", id)
+	}
+	t.Logf("rejected as expected: %v", err)
+}
