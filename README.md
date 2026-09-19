@@ -13,6 +13,11 @@ make dev      # the watchers; open the templ proxy URL it prints
 `make setup` is idempotent and safe to re-run. `make help` lists every target
 and prints the ports your agent slot owns.
 
+`make dev` is enough on its own: `dev-up` migrates and seeds before the
+watchers start, so a clean clone gets a real season and a whitelist rather
+than a site that serves "Nobody has gone first yet" and refuses every
+submission. Both steps are safe to repeat — see **Test users** below.
+
 Several people (or agents) can run this on one machine at the same time:
 every port, container name, network and volume is derived from `AGENT_SLOT`,
 which defaults to 0.
@@ -52,6 +57,19 @@ checks the season's whitelist.
 
 `make seed-dev` creates a **2026 season in `submitting` state** and these four
 people. All four exist in `person`; only three are on the 2026 whitelist.
+
+It runs on its own as part of `make setup`, `make dev`, `make compose-up` and
+`make e2e`, so in practice you rarely call it. It is **idempotent** — every
+statement is an upsert on a natural key — and **additive**: it never writes
+`google_sub`, so once you have signed in as one of these people, re-seeding
+leaves your identity, your submissions and your quota exactly where they were.
+(It does reset `display_name` to the value below; your next sign-in sets it
+again from the ID token.)
+
+The Go integration tests are the one thing that deliberately runs against an
+**unseeded** database: they build their own fixtures per test, and a shared
+season underneath them would give a test state it did not create. See the note
+above `test-db-up` in the Makefile.
 
 | Address | Name | On the 2026 list? | What it shows |
 |---|---|---|---|
