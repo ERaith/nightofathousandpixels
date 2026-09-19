@@ -19,9 +19,30 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/config"
 )
 
+// Server-side timeouts. Without these an http.Server has none at all, so a
+// slow or stalled peer parks a goroutine and its connection indefinitely.
+// ReadHeaderTimeout alone is not enough: it bounds the headers and then stops
+// caring, so a handler that blocks on an outbound call still has nothing to
+// reap it. These are the backstop underneath auth's own client timeout.
 const (
+	// readTimeout bounds headers plus body.
+	readTimeout = 15 * time.Second
+
+	// readHeaderTimeout bounds the headers on their own, which is what stops a
+	// slowloris client from holding a connection open cheaply.
 	readHeaderTimeout = 10 * time.Second
-	shutdownTimeout   = 15 * time.Second
+
+	// writeTimeout bounds how long a handler may take to write its response.
+	// It must stay comfortably above auth's defaultHTTPTimeout: the OIDC
+	// callback makes outbound calls while the client waits, and cutting the
+	// response short at exactly that boundary would turn a slow provider into
+	// an unexplained truncated response.
+	writeTimeout = 30 * time.Second
+
+	// idleTimeout bounds a kept-alive connection between requests.
+	idleTimeout = 60 * time.Second
+
+	shutdownTimeout = 15 * time.Second
 )
 
 func main() {
@@ -42,7 +63,10 @@ func run() error {
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           newRouter(),
+		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	// ListenAndServe always returns a non-nil error; ErrServerClosed is the

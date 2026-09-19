@@ -199,6 +199,17 @@ type claimUser struct {
 	// emailVerified is written verbatim when non-nil and omitted when nil.
 	emailVerified any
 	name          string
+
+	// subjectClaim overrides the sub claim on the wire when non-nil.
+	//
+	// It exists because the two ways a sub can be useless are different shapes
+	// in the token, and only one of them is reachable through subject.
+	// mockoidc builds its registered claims on jwt.RegisteredClaims, whose sub
+	// is tagged omitempty, so subject:"" produces a token with NO sub key at
+	// all. A provider that emits "sub":"" -- present, and empty -- cannot be
+	// expressed that way. Same distinction the email_verified comment above
+	// makes, and the gate has to reject both.
+	subjectClaim any
 }
 
 func (u claimUser) ID() string { return u.subject }
@@ -220,6 +231,9 @@ func (u claimUser) Claims(_ []string, base *mockoidc.IDTokenClaims) (jwt.Claims,
 	}
 
 	claims["email"] = u.email
+	if u.subjectClaim != nil {
+		claims["sub"] = u.subjectClaim
+	}
 	if u.emailVerified != nil {
 		claims["email_verified"] = u.emailVerified
 	}

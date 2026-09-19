@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -40,6 +41,22 @@ func show[T any](v *T) string {
 	return fmt.Sprintf("%v", *v)
 }
 
+// containsSeason reports whether a listing contains the season with this id.
+// Tests assert on the rows they seeded rather than on the length of a global
+// list, so that an unrelated row in the database cannot turn them red.
+func containsSeason(seasons []store.Season, id uuid.UUID) bool {
+	for _, s := range seasons {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// poolCloseTimeout bounds how long a pool may take to close. Generous for an
+// honest close, which returns as soon as the last connection is back.
+const poolCloseTimeout = 10 * time.Second
+
 // connect opens a pool against TEST_DATABASE_URL, skipping the test when it is
 // unset so that `go test ./...` still works without Docker.
 func connect(t *testing.T) *pgxpool.Pool {
@@ -52,7 +69,31 @@ func connect(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("open pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	// Closing the pool is bounded, because this is where a leaked transaction
+	// strands the whole package.
+	//
+	// pool.Close waits for every connection to be returned. A test that never
+	// rolls back still holds one, so Close blocks forever: the package runs to
+	// Go's test timeout and dies with a full goroutine dump that names
+	// pgxpool, not the test that leaked. Measured, not assumed -- the stack
+	// bottoms out in puddle.Pool.Close on a sync.WaitGroup.
+	//
+	// Bounding it turns that into one clear line naming the real cause. The
+	// leak is still a failure; it is just a legible one.
+	t.Cleanup(func() {
+		closed := make(chan struct{})
+		go func() {
+			pool.Close()
+			close(closed)
+		}()
+		select {
+		case <-closed:
+		case <-time.After(poolCloseTimeout):
+			t.Errorf("pool did not close within %s: a test left a transaction open, "+
+				"which holds its connection and would otherwise hang the package until the test timeout",
+				poolCloseTimeout)
+		}
+	})
 	return pool
 }
 
@@ -64,6 +105,7 @@ func begin(t *testing.T, pool *pgxpool.Pool) pgx.Tx {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
+
 	t.Cleanup(func() {
 		if err := tx.Rollback(context.Background()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			t.Errorf("rollback: %v", err)
@@ -125,17 +167,32 @@ func TestQuerierIsSatisfiedByTransaction(t *testing.T) {
 	}
 	t.Logf("store.Querier backed by *pgxpool.Pool also works")
 
-	// The rollback in t.Cleanup must leave nothing behind.
-	t.Cleanup(func() {
-		var n int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM season WHERE year = 2031`).Scan(&n); err != nil {
-			t.Errorf("post-rollback check: %v", err)
-		}
-		if n != 0 {
-			t.Errorf("rollback left %d season row(s) behind", n)
-		}
-	})
+	// The rollback must leave nothing behind -- and proving that requires the
+	// rollback to have already happened.
+	//
+	// This assertion used to be registered with t.Cleanup, where it could not
+	// fail. Cleanups run LIFO, so one registered here fires BEFORE begin's
+	// rollback; and it reads through pool, a different connection, which under
+	// MVCC cannot see this transaction's uncommitted rows in any case. It was
+	// true for a reason unrelated to what it claimed to test. Worse, deleting
+	// the rollback from begin did not turn it red: the open transaction holds
+	// locks the next test blocks on, so the package hung to its 600s timeout
+	// with no diagnostic.
+	//
+	// So roll back here, explicitly, and then look. begin's own cleanup still
+	// runs and tolerates the already-closed transaction.
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatalf("explicit rollback: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM season WHERE id = $1`, seasonID).Scan(&n); err != nil {
+		t.Fatalf("post-rollback check: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("rollback left the seeded season behind (%d row(s) visible from the pool)", n)
+	}
+	t.Logf("after an explicit rollback the seeded season is not visible from the pool")
 }
 
 // TestEffectiveSubmitLimit is the query that matters most: the COALESCE that
@@ -431,13 +488,31 @@ func TestSeasonListingAndMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("current season: %v", err)
 	}
+	// Every assertion below is scoped to the two seasons this test seeded.
+	//
+	// The original versions compared global counts (len(all) == len(pub)+1)
+	// and the global current year, which made the whole test pass only against
+	// an empty database: a single unrelated published season with a later year
+	// turns both red for reasons unconnected to the behaviour under test. The
+	// suite is supposed to be isolated by BEGIN/ROLLBACK, and an assertion
+	// against a global list quietly gives that up.
 	t.Logf("ListSeasons=%d ListPublishedSeasons=%d current=%d (2030 is a draft and must not be current)",
 		len(all), len(pub), current.Year)
-	if current.Year != 2029 {
-		t.Errorf("current season = %d, want 2029", current.Year)
+
+	if !containsSeason(all, draft) {
+		t.Errorf("ListSeasons omitted the draft season; it is the admin listing and must include drafts")
 	}
-	if len(all) != len(pub)+1 {
+	if containsSeason(pub, draft) {
 		t.Errorf("draft season leaked into ListPublishedSeasons")
+	}
+	if !containsSeason(pub, published) {
+		t.Errorf("ListPublishedSeasons omitted the published season this test seeded")
+	}
+	// The point of the draft rule: a half-configured later season must not
+	// shadow the published one. Asserting on the id rather than on the year
+	// keeps this true no matter what else is in the database.
+	if current.ID == draft {
+		t.Errorf("a draft season became current, shadowing the published season")
 	}
 
 	zoe := signIn(t, q, "zoe@example.com", "sub-zoe", "Zoe")

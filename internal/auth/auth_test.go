@@ -706,3 +706,52 @@ func TestMissingSubjectRejected(t *testing.T) {
 	}
 	t.Logf("rejected as expected: %v", err)
 }
+
+// TestUselessSubjectRejected covers the sub shapes that TestMissingSubjectRejected
+// cannot reach.
+//
+// That test queues subject:"" , which -- because mockoidc's registered claims
+// tag sub as omitempty -- produces a token with no sub key at all. A provider
+// that emits the key with an empty or blank value is a different thing on the
+// wire and arrives here by a different route, so it gets its own cases. All of
+// them have to land on ErrNoSubject, because what must never happen is an
+// Identity whose Subject is empty reaching the store: person.google_sub is
+// UNIQUE, and an empty subject there is not a failed lookup but a shared
+// account.
+func TestUselessSubjectRejected(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		sub  any
+	}{
+		{name: "present and empty", sub: ""},
+		{name: "whitespace only", sub: "   "},
+		{name: "tab and newline", sub: "\t\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := startMock(t)
+			// A non-empty subject keeps the provider's own session bookkeeping
+			// honest; subjectClaim is what lands in the token.
+			m.QueueUser(claimUser{
+				subject:       "sub-present",
+				subjectClaim:  tc.sub,
+				email:         "blanksub@example.test",
+				emailVerified: true,
+			})
+			a := newAuthenticator(t, m, testOrigin)
+
+			authURL, cookie := begin(t, a)
+			id, err := callback(t, a, authorize(t, authURL), cookie)
+			if !errors.Is(err, ErrNoSubject) {
+				t.Fatalf("err = %v, want ErrNoSubject", err)
+			}
+			if id != nil {
+				t.Errorf("identity returned with subject %q: %+v", tc.sub, id)
+			}
+			t.Logf("sub=%q rejected as expected: %v", tc.sub, err)
+		})
+	}
+}

@@ -62,3 +62,5 @@ worktrees/
 # go build artifacts
 bin/
 tmp/
+# `go build ./...` drops a main package's binary in the working directory
+/server
