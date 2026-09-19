@@ -1,0 +1,62 @@
+# Integration-test overlay.
+#
+#   docker compose -p "$COMPOSE_TEST_PROJECT" \
+#     -f docker-compose.yml -f docker-compose.test.yml up -d
+#
+# (`make test-db-up` does exactly that.)
+#
+# Two things make this safe to run while your dev stack is up:
+#
+#   1. It runs under a DIFFERENT project name - nap-a<slot>-test. An overlay
+#      applied to the same project would redefine the postgres service and
+#      recreate the container, taking your development data with it.
+#   2. Its ports are TEST_POSTGRES_PORT and TEST_APP_PORT, which are offset
+#      from the dev ports and still derived from AGENT_SLOT, so the test stack
+#      is isolated from other agents too.
+#
+# The database is deliberately disposable: it lives in a tmpfs, so it is fast,
+# it never touches disk, and `down` leaves nothing behind to make the next run
+# differ from this one.
+
+services:
+  postgres:
+    # `!override` matters: compose APPENDS list fields across -f files, so
+    # without it this stack would inherit the base file's mapping as well and
+    # try to bind the dev database's port - colliding with the dev stack that
+    # is very likely already running.
+    ports: !override
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-5434}:5432"
+    volumes:
+      # Same target path as the base file's named volume, which is how compose
+      # knows to replace it rather than mount both.
+      - type: tmpfs
+        target: /var/lib/postgresql/data
+        tmpfs:
+          size: 536870912
+    # fsync off is safe for a database that is thrown away after every run and
+    # makes migrations and fixture loading noticeably quicker.
+    command: >-
+      postgres
+      -c fsync=off
+      -c full_page_writes=off
+      -c synchronous_commit=off
+    restart: "no"
+
+  migrate:
+    restart: "no"
+
+  # Integration tests run on the host against the published port, so the app
+  # container is not needed by default. G3's browser tests do need it, hence
+  # the profile: `--profile e2e` brings it up.
+  app:
+    profiles: ["e2e"]
+    ports: !override
+      - "127.0.0.1:${TEST_APP_PORT:-8085}:8080"
+    environment:
+      ORIGIN: ${COMPOSE_TEST_ORIGIN:-http://localhost:8085}
+    restart: "no"
+
+volumes:
+  # Declared so the base file's reference still resolves; nothing mounts it in
+  # this stack, because the overlay above replaces it with a tmpfs.
+  pgdata:
