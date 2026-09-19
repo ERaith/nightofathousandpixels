@@ -66,3 +66,39 @@ FROM season_member
 JOIN season ON season.id = season_member.season_id
 WHERE season_member.season_id = sqlc.arg(season_id)
   AND season_member.person_id = sqlc.arg(person_id);
+
+-- name: LockSubmitLimitForUpdate :one
+-- GetEffectiveSubmitLimit, plus the row lock that makes the submission cap
+-- actually hold.
+--
+-- The cap is enforced by counting a person's live submissions and then
+-- inserting one more. Those are two statements, and putting them in one
+-- transaction does NOT by itself make the pair safe: at READ COMMITTED -- the
+-- default, and what pgxpool hands out -- two concurrent submissions from the
+-- same person both read a count of 1, both pass a limit of 2, and both
+-- commit. The transaction gives atomicity, not mutual exclusion.
+--
+-- FOR UPDATE is what supplies the mutual exclusion. The second transaction
+-- blocks here until the first commits, and then counts the row the first one
+-- inserted. It is taken on the membership row because that is the thing the
+-- cap is per: one lock per person per season, so two different people
+-- submitting at the same moment never wait on each other.
+--
+-- OF season_member is load-bearing. A bare FOR UPDATE would also lock the
+-- joined season row, which would serialise every submission in the season
+-- behind one another and block an admin editing the season's windows for as
+-- long as any submission is open.
+--
+-- Everything else is GetEffectiveSubmitLimit's contract, unchanged and for the
+-- same reasons: the COALESCE is resolved here so no handler reimplements it,
+-- an explicit 0 override is honoured ("may vote, may not submit"), and no rows
+-- means not a member of this season -- which is a different answer from a
+-- limit of 0, and is also the authorisation answer, since nothing in the
+-- schema stops a non-member's INSERT into movie.
+SELECT COALESCE(season_member.submit_limit, season.default_submit_limit)::integer
+    AS effective_submit_limit
+FROM season_member
+JOIN season ON season.id = season_member.season_id
+WHERE season_member.season_id = sqlc.arg(season_id)
+  AND season_member.person_id = sqlc.arg(person_id)
+FOR UPDATE OF season_member;
