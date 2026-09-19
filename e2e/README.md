@@ -215,9 +215,15 @@ in the tree. Reproduced here — `updates=0`, and a deliberately corrupted
 generated file survived untouched.
 
 `make e2e` therefore runs `e2e-templ-fresh` first, which regenerates with a
-pattern that includes `worktrees` only when this checkout actually has one
-(`$(wildcard)`, not a path spliced into the regex — see the note on
-`TEMPL_IGNORE_E2E` in the Makefile) and fails if anything changed.
+pattern anchored at this checkout's root, with the root regex-escaped (see the
+note on `TEMPL_IGNORE_E2E` in the Makefile), and fails if anything changed.
+
+Three earlier patterns were tried and the first two each reintroduced the bug
+by another route — dropping the exclusion made templ rewrite every other
+agent's worktree from the main clone; leaving the pattern unanchored meant a
+checkout under an ambient `tmp`, `bin` or `archive` directory matched every
+file. That is the shape of a silent-failure bug: every fix for it is itself
+hard to verify.
 
 Delete the pattern when nap-hil lands. **Keep the guard.** A fix without a
 check just relocates the next occurrence; the pattern is the bug, but the
