@@ -9,7 +9,7 @@
 // already deletes the volume, and a seed that can wipe a database is a seed
 // somebody eventually runs against the wrong DATABASE_URL.
 //
-// The people here are the other half of e2e/mockoidcd's identity list. That
+// The people here are the other half of devtools/mockoidcd's identity list. That
 // process signs ID tokens for these addresses; this one writes the whitelist
 // rows those tokens are checked against. If the two lists disagree, a
 // "whitelisted" test user is told they are not on the list -- so the addresses

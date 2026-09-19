@@ -11,7 +11,7 @@
 //
 // Nothing in the shipped server imports this package. It carries no mock
 // provider dependency and no bypass of any kind -- it is a list of names and
-// addresses, and both of its consumers (cmd/seed, e2e/mockoidcd) are
+// addresses, and both of its consumers (cmd/seed, devtools/mockoidcd) are
 // development-only.
 package devusers
 

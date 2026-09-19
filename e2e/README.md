@@ -31,7 +31,7 @@ mints a session for whoever asks. That is a hole in production that happens to
 be switched off, and the failure mode of leaving it switched on is silent and
 total.
 
-Instead the stack runs a **real OIDC provider**, `e2e/mockoidcd`, built on
+Instead the stack runs a **real OIDC provider**, `devtools/mockoidcd`, built on
 [`oauth2-proxy/mockoidc`](https://github.com/oauth2-proxy/mockoidc).
 `OAUTH_ISSUER_URL` is already configuration rather than a constant, so pointing
 it at that process changes the issuer and nothing else. The application still

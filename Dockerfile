@@ -134,7 +134,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -o /out/mockoidcd \
-        ./e2e/mockoidcd
+        ./devtools/mockoidcd
 
 FROM alpine:3.22 AS mockoidcd
 
