@@ -89,6 +89,18 @@ FROM ${RUNTIME_IMAGE} AS final
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/server /server
 
+# The stylesheets served under /static/. They are NOT embedded in the binary,
+# so an image without them boots, serves HTML, passes its health check, and
+# renders the site completely unstyled - every <link> in layout.templ 404s and
+# nothing logs an error. Found by the e2e smoke test fetching base.css from the
+# running container, which is the only place it can be caught.
+#
+# WORKDIR is explicit because distroless:nonroot defaults it to /home/nonroot
+# and internal/web resolves "static" RELATIVELY - copying to /static without
+# this puts it exactly one directory from where the server looks.
+WORKDIR /
+COPY static /static
+
 # The container always listens on 8080; the host-side port is the compose
 # publish mapping's business, so it can vary per agent slot.
 ENV PORT=8080
