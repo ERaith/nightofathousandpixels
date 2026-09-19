@@ -62,7 +62,7 @@ func SiteHeader(p Page) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, item := range p.Nav {
-				if p.isCurrent(item) {
+				if isCurrent(p, item) {
 					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<a href=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
