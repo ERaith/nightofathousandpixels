@@ -55,3 +55,6 @@ prisma/*.db-journal
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# agent worktrees
+worktrees/
