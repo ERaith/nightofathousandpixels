@@ -17,9 +17,15 @@ CREATE TABLE result (
 
     -- Composite so the winner is guaranteed to be from this season. MATCH
     -- SIMPLE means a NULL winner_movie_id satisfies the constraint outright,
-    -- which is exactly the tie case. NO ACTION for the same reason as
-    -- ballot_entry: the end-of-statement check does not depend on the order
-    -- Postgres walks the overlapping cascade paths out of season.
+    -- which is exactly the tie case.
+    --
+    -- NO ACTION for the same reason as ballot_entry, which is NOT the reason
+    -- an earlier version of this comment gave: NO ACTION and RESTRICT are both
+    -- checked at end of statement, so the choice buys nothing here today. It
+    -- is kept because only NO ACTION honours DEFERRABLE INITIALLY DEFERRED --
+    -- RESTRICT accepts the clause and is silently downgraded, visible in
+    -- pg_trigger.tgdeferrable and never in pg_constraint.condeferred. See the
+    -- long note on ballot_entry_movie_fkey in 00005 before changing either.
     CONSTRAINT result_winner_movie_fkey FOREIGN KEY (season_id, winner_movie_id)
         REFERENCES movie (season_id, id) ON DELETE NO ACTION,
 
