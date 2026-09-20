@@ -129,12 +129,30 @@ type submitFields struct {
 // constant and the template reads back with the same constant, so a typo is a
 // compile error rather than a message that silently never appears.
 func newSubmitFields(t Theme, form SubmitForm) submitFields {
+	// The three controls TMDB fills in render readonly, so their ordinary
+	// hints stop being true: "Optional. A YouTube or Vimeo link" is advice for
+	// somebody about to type one, and this box already has one and will not
+	// take another. They get one shared line instead, which also explains the
+	// readonly state and points at the way out of it.
+	//
+	// Description is not in the list on purpose. It stays editable, because
+	// "Why this one" is the person's sentence rather than TMDB's, so its own
+	// hint is still exactly right.
+	fromTMDB := form.FromTMDB()
+	hint := func(key string) string {
+		if fromTMDB {
+			return t.Text(viewmodel.KeySearchFilledHint)
+		}
+
+		return t.Text(key)
+	}
+
 	return submitFields{
 		Title: formField{
 			ID:    "submit-title",
 			Name:  viewmodel.FieldTitle,
 			Label: t.Text(viewmodel.KeySubmitTitleLabel),
-			Hint:  t.Text(viewmodel.KeySubmitTitleHint),
+			Hint:  hint(viewmodel.KeySubmitTitleHint),
 			Value: form.Title,
 			Error: form.Errors.For(viewmodel.FieldTitle),
 		},
@@ -142,7 +160,7 @@ func newSubmitFields(t Theme, form SubmitForm) submitFields {
 			ID:    "submit-year",
 			Name:  viewmodel.FieldYear,
 			Label: t.Text(viewmodel.KeySubmitYearLabel),
-			Hint:  t.Text(viewmodel.KeySubmitYearHint),
+			Hint:  hint(viewmodel.KeySubmitYearHint),
 			Value: form.Year,
 			Error: form.Errors.For(viewmodel.FieldYear),
 		},
@@ -150,7 +168,7 @@ func newSubmitFields(t Theme, form SubmitForm) submitFields {
 			ID:    "submit-trailer-url",
 			Name:  viewmodel.FieldTrailerURL,
 			Label: t.Text(viewmodel.KeySubmitTrailerLabel),
-			Hint:  t.Text(viewmodel.KeySubmitTrailerHint),
+			Hint:  hint(viewmodel.KeySubmitTrailerHint),
 			Value: form.TrailerURL,
 			Error: form.Errors.For(viewmodel.FieldTrailerURL),
 		},

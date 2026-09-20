@@ -234,6 +234,13 @@ const (
 	KeySearchEmpty      = "submit.search.empty"
 	KeySearchFailed     = "submit.search.failed"
 	KeySearchManual     = "submit.search.manual"
+
+	// KeySearchFilledHint replaces a field's own hint on the three controls
+	// TMDB fills in, because those become readonly and their ordinary hints
+	// read as instructions for a box nobody can type in. "Optional. A YouTube
+	// or Vimeo link" is advice; the box already has one and will not take
+	// another.
+	KeySearchFilledHint = "submit.search.filled.hint"
 	KeySearchNoPoster   = "submit.search.no_poster"
 	KeySearchResultsFor = "submit.search.results_for"
 
@@ -404,6 +411,7 @@ var BaseCopy = Copy{
 	KeySearchFailed: "The film database did not answer just now. Nothing is lost — " +
 		"type it in below and it goes up the same way.",
 	KeySearchManual: "Not in there? Type it in yourself.",
+	KeySearchFilledHint: "From the film database. Use \u201cNot this one\u201d above to pick something else.",
 	// Alt text for the placeholder tile where a poster would be. It says the
 	// poster is missing rather than describing the film, because that is the
 	// only true thing there is to say about an empty box.

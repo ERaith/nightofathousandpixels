@@ -605,3 +605,76 @@ func TestTMDBSubmissionPassesValidation(t *testing.T) {
 		t.Errorf("trailerURL = %v", d.trailerURL)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The seam with nap-0z8 (builder-11), asserted rather than assumed.
+//
+// TrailerEmbed/Embeddable live in this package and run at render and submit
+// time over whatever is in movie.trailer_url. This ticket is the upstream that
+// puts URLs there without anybody typing one, so the contract between the two
+// is worth a test that fails loudly if either side drifts.
+// ---------------------------------------------------------------------------
+
+// A trailer that came from TMDB must be one the board can actually play.
+// If this fails, the picker is producing submissions that validate() itself
+// refuses, which would read to a person as the search being broken.
+func TestTMDBTrailerIsEmbeddable(t *testing.T) {
+	t.Parallel()
+
+	s := serviceWithTMDB(t, stubTMDB)
+
+	form, _ := s.authoritative(context.Background(), viewmodel.SubmitForm{}, "78")
+
+	if form.TrailerURL == "" {
+		t.Fatal("no trailer came back for a film whose TMDB videos list has one")
+	}
+	if !Embeddable(form.TrailerURL) {
+		t.Errorf("Embeddable(%q) is false: the picker produces links the board cannot play", form.TrailerURL)
+	}
+	// And it normalises to the player, which is what a card renders.
+	if got := TrailerEmbed(form.TrailerURL); got == "" {
+		t.Errorf("TrailerEmbed(%q) is empty", form.TrailerURL)
+	}
+}
+
+// A film whose TMDB videos list has no usable YouTube trailer must leave the
+// field EMPTY -- not a blank string that fails movie_trailer_url_shape, and
+// not a TMDB page URL, which Embeddable would now reject and put a field error
+// on a box the person never touched.
+func TestFilmWithNoTrailerLeavesTheFieldEmpty(t *testing.T) {
+	t.Parallel()
+
+	const noTrailer = `{"id":4977,"title":"Hausu","release_date":"1977-08-30",
+	  "overview":"A schoolgirl and six classmates travel to her aunt's country home.",
+	  "videos":{"results":[
+	    {"key":"123456789","site":"Vimeo","type":"Trailer","iso_639_1":"en","official":true},
+	    {"key":"aaaaaaaaaaa","site":"YouTube","type":"Featurette","iso_639_1":"en","official":true}
+	  ]}}`
+
+	s := serviceWithTMDB(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(noTrailer))
+	})
+
+	form, details := s.authoritative(context.Background(), viewmodel.SubmitForm{}, "4977")
+	if details == nil {
+		t.Fatal("no details for a film the stub has")
+	}
+
+	if form.TrailerURL != "" {
+		t.Errorf("TrailerURL = %q, want empty: neither a Vimeo entry nor a featurette is a trailer", form.TrailerURL)
+	}
+
+	// The rest of the submission is still perfectly good, and the empty
+	// trailer must reach the row as SQL NULL rather than as a validation
+	// error on a field nobody filled in.
+	d, errs := validate(form)
+	if errs.Any() {
+		t.Fatalf("a film with no trailer was refused: %+v", errs)
+	}
+	if d.trailerURL != nil {
+		t.Errorf("trailerURL = %q, want nil so the column is NULL", *d.trailerURL)
+	}
+	if d.title != "Hausu" {
+		t.Errorf("title = %q", d.title)
+	}
+}
