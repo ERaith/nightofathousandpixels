@@ -72,6 +72,13 @@ services:
       # stack behind Nginx Proxy Manager overrides it with 1. Getting this
       # wrong is silent either way - see internal/web/middleware/clientip.go.
       TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
+      # The way the FIRST season gets created on a deployment that is not
+      # seeded - which production never is. Admin is per season, so before a
+      # season exists nobody has a membership row and nobody can make one.
+      # Empty is the correct steady state: once a season exists its creator is
+      # an admin of it, and this can be removed. See "Starting the first
+      # season" in README.md.
+      BOOTSTRAP_ADMIN_EMAILS: ${BOOTSTRAP_ADMIN_EMAILS:-}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

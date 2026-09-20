@@ -22,6 +22,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/store"
 	"github.com/ERaith/nightofathousandpixels/internal/theme"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
+	"github.com/ERaith/nightofathousandpixels/internal/web/admin"
 	"github.com/ERaith/nightofathousandpixels/internal/web/board"
 	"github.com/ERaith/nightofathousandpixels/internal/web/health"
 	"github.com/ERaith/nightofathousandpixels/internal/web/middleware"
@@ -295,6 +296,32 @@ func newRouter(
 		Nav:           nav,
 		Theme:         packs.Theme(pack),
 	}).Routes(r)
+
+	// The screens that run a season (ticket D3). They hold their own gate
+	// rather than going behind accounts.RequireMember, because on a fresh
+	// production database there is no season to be a member of and the person
+	// trying to create one would be told "no season is open". See the package
+	// comment on internal/web/admin, and BOOTSTRAP_ADMIN_EMAILS in README.md.
+	admin.New(admin.Options{
+		Store:            queries,
+		DB:               pool,
+		Sessions:         sessions,
+		LoginPath:        authenticator.LoginPath(),
+		IsBootstrapAdmin: cfg.IsBootstrapAdmin,
+		Logger:           logger,
+		Origin:           cfg.Origin,
+		Nav:              nav,
+		Theme:            packs.Theme(pack),
+	}).Routes(r)
+	if len(cfg.BootstrapAdminEmails) > 0 {
+		// Worth a startup line. It is a privilege that outlives the reason it
+		// was granted, and the only way anybody notices it is still set is if
+		// the server says so every time it boots.
+		logger.Info("bootstrap admins configured",
+			slog.Int("count", len(cfg.BootstrapAdminEmails)),
+			slog.String("hint", "remove BOOTSTRAP_ADMIN_EMAILS once a season exists; its creator is an admin of it"),
+		)
+	}
 
 	// The HTML pages and /static/. Origin is only used to build absolute URLs
 	// for link previews; nothing here reads the database.
