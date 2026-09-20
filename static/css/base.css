@@ -521,19 +521,22 @@ hr {
   background: var(--_surface);
 }
 
+/* One wrapping row, not a column. The three children are the wordmark, the
+   nav and the account control, and .nav's `flex: 1 0 100%` is what does the
+   work: below 40em it forces a line break AFTER the wordmark and the account
+   have shared the first line, so a phone gets a two-line header instead of
+   the three-line one a plain column produced. From 40em the nav joins them.
+
+   Header order in the DOM is wordmark, nav, account -- reading order and tab
+   order both -- and the account is pushed to the far edge with an auto margin
+   rather than by being reordered, so what a screen reader hears and what a
+   keyboard visits match what is on screen. */
 .site-header__inner {
   display: flex;
-  flex-direction: column;
-  gap: var(--_sp-3);
-  padding-block: var(--_sp-4);
-}
-
-.site-header__brand {
-  display: flex;
-  align-items: center;
-  gap: var(--_sp-3);
   flex-wrap: wrap;
-  min-block-size: var(--_tap);
+  align-items: center;
+  gap: var(--_sp-2) var(--_sp-3);
+  padding-block: var(--_sp-3);
 }
 
 .wordmark {
@@ -546,19 +549,36 @@ hr {
   display: inline-flex;
   align-items: center;
   min-block-size: var(--_tap);
+
+  /* A line of its own below 40em. At 320px there is not room for a title, a
+     nav and an account control on one row, and three stacked rows is a
+     quarter of a phone screen spent on chrome -- so the title takes the
+     first row and the nav and the account share the second. */
+  flex: 1 0 100%;
+  min-inline-size: 0;
 }
 
 .nav {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--_sp-1) var(--_sp-4);
+  gap: var(--_sp-1) var(--_sp-3);
+
+  /* Deliberately 0 grow. The account control is pushed to the end edge by its
+     own auto margin, so a nav that grew would only stretch its own hit areas
+     apart for no reason -- and, below 40em where it shares the row, the extra
+     width is exactly what would bump the account onto a third line. */
+  flex: 0 1 auto;
 }
 
 .nav a {
   display: inline-flex;
   align-items: center;
-  padding-inline: var(--_sp-2);
+  /* The nav shares a row with the account control below 40em, and 288px of
+     content is the whole budget. The 44px tap floor is on the block axis and
+     is untouched; what gives here is horizontal padding, which is spacing
+     rather than target size -- the gap between links keeps them apart. */
+  padding-inline: var(--_sp-1);
   border-radius: var(--_radius);
   text-decoration: none;
   color: var(--_text);
@@ -573,6 +593,72 @@ hr {
   font-weight: 600;
   text-decoration: underline;
   text-decoration-thickness: 2px;
+}
+
+/* -- The account control ---------------------------------------------------
+   Who you are and how you leave, or the way in. See AccountControl in
+   header.templ: the template renders one of the two or neither, so nothing
+   here has to cope with both being present at once. */
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--_sp-1);
+  flex: 0 0 auto;
+  margin-inline-start: auto;   /* hard against the end edge on every line */
+}
+
+/* Not a tap target -- it is a decorative disc with the same letter the name
+   beside it starts with -- so it is deliberately smaller than 44px and is
+   aria-hidden in the template. */
+.account__avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 999px;
+  background: var(--_accent);
+  color: var(--_on-accent);
+  font-family: var(--_font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* A header is chrome, and a header that wraps onto a fourth line because
+   somebody signed in with a long address is worse than an ellipsis. The full
+   value stays in the DOM either way, preceded by a visually-hidden
+   "Signed in as", so nothing is lost to a screen reader. 18ch clears every
+   ordinary display name; it is an email address that truncates. */
+.account__name {
+  min-inline-size: 0;
+  max-inline-size: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.account__out {
+  flex: 0 0 auto;
+}
+
+/* Below 30em there is no room to print the name next to a wordmark and a
+   44px button, so it is clipped rather than display:none-d. The difference
+   matters: display:none would take "Signed in as Bob Voter" out of the
+   accessibility tree as well, and the disc that replaces it is aria-hidden,
+   which would leave a phone screen reader with no way to find out who is
+   signed in at all. */
+@media (max-width: 29.999em) {
+  .account__name {
+    clip-path: inset(50%);
+    block-size: 1px;
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
 }
 
 .site-main {
@@ -611,10 +697,24 @@ hr {
   }
 
   .site-header__inner {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--_sp-5);
+    padding-block: var(--_sp-4);
+    gap: var(--_sp-3) var(--_sp-5);
+  }
+
+  /* Back to its natural width so the nav follows it rather than starting a
+     row of its own. */
+  .wordmark {
+    flex: 0 1 auto;
+  }
+
+  /* Room for all three on one line, so the nav gets its ordinary spacing
+     back. */
+  .nav {
+    gap: var(--_sp-1) var(--_sp-4);
+  }
+
+  .nav a {
+    padding-inline: var(--_sp-2);
   }
 }
 
@@ -996,6 +1096,26 @@ textarea:user-invalid,
 
 .btn--ghost {
   background: transparent;
+  color: var(--_accent);
+  border-color: var(--_accent);
+}
+
+/* Low emphasis, for chrome rather than content: the header's sign-out and
+   sign-in. It is a full button underneath -- same 44px floor, same focus
+   ring, same border contrast -- and only the fill is dropped, so that the
+   thing a visitor came to the page to do stays the loudest thing on it. */
+.btn--quiet {
+  background: transparent;
+  color: var(--_text);
+
+  /* Narrower than a content button on purpose: this one shares a 288px row
+     with the nav at 320px, and the horizontal padding is the only part of it
+     that is spacing rather than target size. The 44px floor is on the block
+     axis and on min-inline-size, and both are untouched. */
+  padding-inline: var(--_sp-3);
+}
+
+.btn--quiet:hover {
   color: var(--_accent);
   border-color: var(--_accent);
 }

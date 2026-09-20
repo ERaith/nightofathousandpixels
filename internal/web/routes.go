@@ -52,10 +52,24 @@ type Options struct {
 	// Nav is the site header's navigation. Nil means templates.DefaultNav().
 	//
 	// It is a parameter rather than a constant because the links that belong
-	// in the header depend on what is mounted: C3 adds a sign-in link, and a
-	// header offering to sign you in on a build with no authentication wired
-	// up would be a dead link on the team's front door.
+	// in the header depend on what is mounted: a header offering pages this
+	// build does not serve would be a dead link on the team's front door.
 	Nav []templates.NavItem
+
+	// SignInHref is where the header's account control sends a visitor who is
+	// not signed in. Blank renders no control at all, which is what a build
+	// with no authentication wired up wants.
+	//
+	// These pages -- the front page and the three error pages -- are the only
+	// ones on the site whose handler does not know who is reading them: this
+	// package holds no session and touches no database, by design. So the
+	// control they get is the signed-out one whether or not there is a
+	// session, which is the one thing nap-1j5's fix does not reach. Giving
+	// them the real answer means an optional-auth middleware in
+	// internal/signin, filling LayoutData.CurrentUser the way board.withViewer
+	// already does. That is a separate ticket and is deliberately not done
+	// here.
+	SignInHref string
 }
 
 // Site renders the site's pages. Build one with New and mount it with Routes.
@@ -97,6 +111,7 @@ func (s *Site) page(r *http.Request) templates.Page {
 		Path:       r.URL.Path,
 		Nav:        s.nav,
 		SeasonYear: s.opts.Season,
+		SignInHref: s.opts.SignInHref,
 	}
 }
 

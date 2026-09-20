@@ -1,14 +1,31 @@
 package templates
 
-// SiteHeader is the wordmark and the primary navigation.
+// SiteHeader is the wordmark, the primary navigation and the account control.
 //
 // The nav is data, not markup: a page hands Layout the links it wants, and the
-// item matching Page.Path gets aria-current="page". Today that list is a
-// placeholder with one entry (see DefaultNav); ticket E1 adds Submit and E4
-// adds the slate. Nothing here needs to change when they do.
+// item matching Page.Path gets aria-current="page".
+//
+// The account control is NOT one of those links, and that is the fix for
+// nap-1j5. "Sign in" used to be an ordinary NavItem, which meant the header
+// said "Sign in" to somebody who already was, on every page, with no name and
+// no way out. A nav item is a constant; it cannot know who is reading it.
+// LayoutData does, so the control is built from LayoutData.CurrentUser,
+// SignInHref and SignOutHref instead.
+//
+// Those are mutually exclusive by construction on the handler side — see
+// board.withViewer, which drops SignInHref the moment there is somebody to
+// greet — and AccountControl renders nothing at all when none of them is set,
+// because an error page rendered before auth is configured wants no account
+// control rather than an empty one.
 //
 // An empty nav renders no <nav> element at all rather than an empty landmark,
 // which a screen reader would otherwise announce and then find nothing in.
+//
+// The three children are flex items in one wrapping row (see .site-header__inner
+// in base.css): at 320px the wordmark and the account share the first line and
+// the nav wraps under them, and from 40em all three sit on one line. Putting
+// the account beside the wordmark rather than under the nav is what keeps the
+// header two lines tall on a phone instead of three.
 templ SiteHeader(p Page) {
 	{{ theme := p.Theme.Resolve() }}
 	<header class="site-header">
@@ -25,15 +42,57 @@ templ SiteHeader(p Page) {
 					}
 				</nav>
 			}
+			@AccountControl(p)
 		</div>
 	</header>
 }
 
+// AccountControl is the "who am I, and how do I leave" corner of the header.
+//
+// Signed in: an initial disc, the name (or the address, when the provider gave
+// us no name — CurrentUser.Label falls back), and a way out. Signed out: the
+// way in. Neither known: nothing, rather than a control that guesses.
+//
+// Sign-out is a POST form rather than a link, for the same reason as the one
+// on internal/signin's own pages: a GET /auth/logout gets followed by anything
+// that prefetches — a browser, a chat client building a link preview, a
+// scanner — and every one of those would silently sign the person out. This
+// one is on every page of the site, so the number of things in a position to
+// do that went up rather than down.
+//
+// The disc is aria-hidden because it is the same letter the name beside it
+// already starts with, and "B, Bob Voter" is noise. The name carries a
+// visually-hidden "Signed in as" so that the header states the fact rather
+// than leaving it to be inferred from a stray name — and base.css clips the
+// name itself below 30em rather than display:none-ing it, so the whole phrase
+// is still announced on a phone where there is no room to print it.
+templ AccountControl(p Page) {
+	if p.SignedIn() {
+		<div class="account">
+			<span class="account__avatar" aria-hidden="true">{ accountInitial(p.CurrentUser) }</span>
+			<span class="account__name">
+				<span class="visually-hidden">Signed in as </span>
+				{ p.CurrentUser.Label() }
+			</span>
+			if p.SignOutHref != "" {
+				<form class="account__out" method="post" action={ p.SignOutHref }>
+					<button class="btn btn--quiet" type="submit">Sign out</button>
+				</form>
+			}
+		</div>
+	} else if p.SignInHref != "" {
+		<div class="account">
+			<a class="btn btn--quiet" href={ p.SignInHref }>Sign in</a>
+		</div>
+	}
+}
+
 // DefaultNav is the placeholder navigation: only the routes that exist.
 //
-// It deliberately does not list Submit or Past years yet. A header full of
-// links that 404 is worse than a short one, and the two weeks this page spends
-// as the team's front door are exactly when a dead link would get normalised.
+// It deliberately does not list Submit, Past years or Sign in. A header full
+// of links that 404 is worse than a short one, and sign-in is no longer a nav
+// item anywhere — it is the account control above, which knows whether the
+// reader needs it.
 func DefaultNav() []NavItem {
 	return []NavItem{
 		{Label: "Home", Href: "/"},

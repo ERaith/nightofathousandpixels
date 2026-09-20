@@ -72,6 +72,17 @@ type Options struct {
 	// Nav is the site header's navigation, so these pages carry the same
 	// header as the others.
 	Nav []templates.NavItem
+
+	// SignInHref is where the header's account control sends a reader who is
+	// not signed in. Blank renders no control, which is what a build with no
+	// authentication wired up wants.
+	//
+	// Several pages here are rendered TO a signed-in person -- the whitelist
+	// refusal above all, where "you signed in with the wrong Google account"
+	// is the most likely explanation for what they are reading -- so pageFor
+	// below replaces this with the account half whenever the handler has the
+	// person in hand. See nap-1j5.
+	SignInHref string
 }
 
 // Service mounts the sign-in routes and gates the pages behind them.
@@ -199,7 +210,8 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleSignedIn(w http.ResponseWriter, r *http.Request) {
 	v := MustCurrent(r.Context())
-	s.render(w, r, http.StatusOK, "Signed in", SignedInPage(s.page(r, "Signed in"), v))
+	s.render(w, r, http.StatusOK, "Signed in",
+		SignedInPage(s.pageFor(r, "Signed in", v.Person, v.IsAdmin()), v))
 }
 
 // RequireMember is the whitelist gate (ticket C4).
@@ -249,7 +261,8 @@ func (s *Service) RequireMember(next http.Handler) http.Handler {
 		season, err := s.opts.Store.GetCurrentSeason(r.Context())
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				s.render(w, r, http.StatusOK, "No season is open", NoSeasonPage(s.page(r, "No season is open")))
+				s.render(w, r, http.StatusOK, "No season is open",
+					NoSeasonPage(s.pageFor(r, "No season is open", person, false)))
 				return
 			}
 			s.opts.Logger.Error("whitelist gate: load current season", slog.Any("error", err))
@@ -272,7 +285,8 @@ func (s *Service) RequireMember(next http.Handler) http.Handler {
 					slog.Int("season", int(season.Year)),
 				)
 				s.render(w, r, http.StatusOK, "You're not on the list yet",
-					NotOnTheListPage(s.page(r, "You're not on the list yet"), person.Email, season.Year))
+					NotOnTheListPage(s.pageFor(r, "You're not on the list yet", person, false),
+						person.Email, season.Year))
 				return
 			}
 			s.opts.Logger.Error("whitelist gate: load membership", slog.Any("error", err))
@@ -299,22 +313,48 @@ func (s *Service) RequireAdmin(next http.Handler) http.Handler {
 			// the season. 404 rather than 403 -- there is nothing for them to
 			// ask for, and naming the page only tells them it exists.
 			s.render(w, r, http.StatusNotFound, templates.NotFoundContent.Heading,
-				templates.NotFoundPage(s.page(r, templates.NotFoundContent.Heading)))
+				templates.NotFoundPage(s.pageFor(r, templates.NotFoundContent.Heading, v.Person, v.IsAdmin())))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// page builds the shell data this package's pages share.
+// page builds the shell data this package's pages share, for a reader whose
+// identity the handler does not have: the header offers the way in.
 func (s *Service) page(r *http.Request, title string) templates.Page {
 	return templates.Page{
-		Theme:  s.opts.Theme,
-		Origin: s.opts.Origin,
-		Path:   r.URL.Path,
-		Nav:    s.opts.Nav,
-		Title:  title,
+		Theme:      s.opts.Theme,
+		Origin:     s.opts.Origin,
+		Path:       r.URL.Path,
+		Nav:        s.opts.Nav,
+		Title:      title,
+		SignInHref: s.opts.SignInHref,
 	}
+}
+
+// pageFor is page() for a reader the handler has already identified.
+//
+// The two halves are mutually exclusive by construction, exactly as in
+// board.withViewer: SignInHref is dropped the moment there is somebody to
+// greet, so a signed-in person is never offered a second sign-in, and
+// CurrentUser stays nil for everyone else so the header cannot greet an empty
+// name.
+//
+// isAdmin is passed rather than read off a membership row because the two
+// pages that most need this -- the whitelist refusal and "no season is open"
+// -- are reached precisely when there is no membership row to read.
+func (s *Service) pageFor(r *http.Request, title string, person store.Person, isAdmin bool) templates.Page {
+	p := s.page(r, title)
+	p.CurrentUser = &templates.CurrentUser{
+		DisplayName: person.DisplayName,
+		Email:       person.Email,
+		IsAdmin:     isAdmin,
+	}
+	p.SignInHref = ""
+	p.SignOutHref = LogoutPath
+
+	return p
 }
 
 func (s *Service) serverError(w http.ResponseWriter, r *http.Request) {
