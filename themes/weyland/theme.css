@@ -1,0 +1,97 @@
+/* ==========================================================================
+   Weyland-Yutani
+   --------------------------------------------------------------------------
+   Custom properties only. The palette, the type and the copy are in
+   manifest.json and are emitted into :root above this. This file holds the
+   two values that are built out of those rather than chosen on their own:
+   the backdrop, which needs the pack's own asset URLs, and the shadow, which
+   needs the accent.
+
+   This is a port, not a new theme. The 2025 Next.js site is in archive/2025
+   and its default look was this one: one cyan doing every job, on a page that
+   is actually black rather than nearly black, with a warm near-black hairline
+   on every edge. Reproduced here as tokens:
+
+     archive/2025/styles/globals.css     this pack
+     --accent: 188 100% 50%              accent      #00ddff
+     --accent-2: 188 100% 70%            accent-alt  #66ebff
+     --chrome:  60 1% 25%                border      #5a5a58   (see below)
+     body { background: black }          bg          #000000
+     rounded-2xl on the card             radius      16px
+
+   TWO PLACES THIS DELIBERATELY DIVERGES FROM 2025, BOTH WRITTEN DOWN BECAUSE
+   "port it exactly" is the instruction and these are the exceptions.
+
+   1. --border is #5a5a58 and not 2025's #40403f. The chrome hue is the same;
+      the lightness is raised from 25% to 35%. themes/README.md asks a border
+      to reach 3:1 against the background and #40403f reaches 2.02:1 on pure
+      black. That mattered less in 2025, where the card also carried a fill
+      one shade off the page; here base.css derives the media-box edge and the
+      card's footer rule from this token at 55%, and at 2:1 those two rules
+      disappear entirely. #5a5a58 is 3.03:1 and both survive the mix.
+
+   2. The backdrop is stronger than 2025's, because 2025's did not render.
+      That block was a radial bloom, a black scrim and wy-stripes.svg, the
+      whole stack at opacity 0.25 — so the bloom landed at an effective alpha
+      of 0.02 and the stripes at 0.025, which on any display is nothing. The
+      layers below are the same three ideas at alphas that can actually be
+      seen, and the scrim is dropped: it was there to knock back a bloom that
+      is no longer too strong.
+
+   AND ONE ASSET THAT IS NOT PORTED. archive/2025/public/noise.png is not a
+   PNG. It is a 131-byte text file containing a base64 data URI, so the
+   browser was served text/plain and the `background-image: url("/noise.png")`
+   on 2025's body never painted. Decoding it does not help: it describes a 2x2
+   image with a malformed zlib stream, and 2025 asked for it at
+   background-size: 512px, which would have scaled two pixels to 256px each.
+   The grain the site appeared to have was a grain nobody ever saw. The third
+   backdrop layer below is a CSS hatch doing that job for real; no asset was
+   drawn for it, and the file is left in the archive where it belongs.
+
+   wy-stripes.svg and wy-logo.svg are copied into assets/ byte for byte.
+   ========================================================================== */
+
+:root {
+  /* Three layers, painted front to back on body::before, which base.css pins
+     behind the page and excludes from print.
+
+     1. The cyan bloom off the top-right corner. 2025's geometry exactly —
+        1200x600 at 100% 0%, fading out by 60% — at an alpha that survives
+        being looked at.
+     2. A 1px diagonal hatch at 45 degrees, matching the angle inside the
+        stripes. This is the texture 2025 meant to have. It keeps a pure
+        black page from banding on an OLED phone, which is where most of
+        these thirty people are reading the slate. It sits above the scrim
+        so that knocking the stripes back does not also knock this out.
+     3. A corner scrim: transparent at the bottom-left corner, solid black
+        by the edge of its ellipse. 2025 had a flat black scrim over the
+        stripes too. This one is graded rather than flat because it is doing
+        a second job — wy-stripes.svg is a 200x200 square of hard-edged
+        hazard bars, and at any alpha you can actually see, a square of them
+        sitting on the page looks like an asset that loaded by mistake. The
+        scrim dissolves the square's own edges, so what is left is a marking
+        in the corner that fades out instead of stopping.
+     4. wy-stripes.svg itself, in the bottom-left corner, sized larger than
+        the scrim so that its hard edge falls in the part the scrim has
+        already taken to black. Both sizes are capped against the viewport
+        rather than fixed: this layer is painted on a position: fixed
+        element, so a flat 320px is a corner marking on a desktop and the
+        entire lower half of a 320px phone.
+
+     Per-layer sizes and positions are the reason base.css no longer forces
+     background-size: cover on this element. */
+  --backdrop:
+    radial-gradient(1200px 600px at 100% 0%, rgb(0 221 255 / 0.10), transparent 60%) right top no-repeat,
+    repeating-linear-gradient(45deg, rgb(255 255 255 / 0.014) 0 1px, transparent 1px 4px),
+    radial-gradient(min(46vw, 380px) min(46vw, 380px) at 0% 100%,
+      rgb(0 0 0 / 0) 0%, rgb(0 0 0 / 0.5) 45%, rgb(0 0 0 / 0.94) 100%),
+    url("/theme/weyland/assets/wy-stripes.svg") left bottom / min(52vw, 430px) no-repeat;
+
+  /* A black drop shadow on a black page is not a shadow, it is nothing. What
+     separates a card from the void here is the hairline border plus a very
+     faint cyan bloom underneath it, in the same cyan as everything else. */
+  --shadow:
+    0 0 0 1px rgb(0 221 255 / 0.05),
+    0 2px 4px rgb(0 0 0 / 0.80),
+    0 18px 44px rgb(0 221 255 / 0.035);
+}

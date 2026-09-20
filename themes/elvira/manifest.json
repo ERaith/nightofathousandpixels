@@ -35,6 +35,7 @@
     "quota.barred": "You're on the list to rank this year, but not to put anything on the slab.",
     "quota.at_limit": "That's all {count} spent, and no, you can't have another.",
     "quota.remaining": "{count} left of {limit}.",
+    "quota.heading": "Yours to spend",
 
     "home.lead": "Thirty-odd friends, two picks each, and one gloriously vindictive instant-runoff count that decides what everybody's watching. Democracy, but with a body count.",
     "home.notice.lede": "Not yet.",

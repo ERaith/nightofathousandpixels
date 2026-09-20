@@ -677,7 +677,7 @@ func TestAnOrdinaryRequestIsUntouched(t *testing.T) {
 // The real packs
 // ---------------------------------------------------------------------------
 
-// The two packs this ticket ships have to load, and have to keep loading. They
+// The packs this repository ships have to load, and have to keep loading. They
 // are read from the repository rather than from a fixture so that a manifest
 // edited in September is checked by this test in October.
 func TestTheShippedPacksLoad(t *testing.T) {
@@ -687,7 +687,7 @@ func TestTheShippedPacksLoad(t *testing.T) {
 		t.Fatalf("loading %s: %v", root, err)
 	}
 
-	for _, name := range []string{"portal", "elvira"} {
+	for _, name := range []string{"portal", "elvira", "weyland"} {
 		t.Run(name, func(t *testing.T) {
 			pack, ok := r.Lookup(name)
 			if !ok {

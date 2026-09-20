@@ -120,8 +120,10 @@ curl -X POST http://localhost:9000/control/user \
   -d '{"subject":"sub-alice","email":"alice@example.test","name":"Alice"}'
 ```
 
-Every page under the season's theme pack. `?theme=portal`, `?theme=elvira` or
-`?theme=none` on any URL to compare. Elvira is the pick for 2026.
+Every page under the season's theme pack. `?theme=weyland`, `?theme=elvira`,
+`?theme=portal` or `?theme=none` on any URL to compare. Weyland-Yutani is the
+pick for 2026 — the 2025 look, ported — and `make seed-dev` sets it on the
+season, so the development stack comes up wearing it.
 
 ---
 
@@ -227,7 +229,7 @@ internal/
   web/                 routes, handlers, templates, view models
   web/board/           the slate and submit handlers
 static/css/base.css    layout and the accessibility floor
-themes/                portal/ and elvira/ — colour, type and copy only
+themes/                weyland/, elvira/, portal/ — colour, type and copy only
 e2e/                   Playwright, driving a real browser against a real stack
 ```
 

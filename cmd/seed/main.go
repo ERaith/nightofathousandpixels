@@ -43,6 +43,17 @@ const seedYear = 2026
 // open", which is a confusing first run.
 const seedState = "submitting"
 
+// seedThemePack is the look the 2026 season wears. season.theme_pack defaults
+// to 'default' in migration 00002, which is the unthemed site — correct as a
+// column default, and wrong for the development stack, where it meant every
+// agent and every human running `make dev` judged the site with no pack on it
+// while two packs sat on disk unlooked-at.
+//
+// Set here rather than in the migration because which pack a season wears is
+// data, not schema: 2025 was Weyland-Yutani, 2027 will be something else, and
+// neither is a reason to write a migration.
+const seedThemePack = "weyland"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("seed: %v", err)
@@ -106,7 +117,7 @@ func run() error {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	log.Printf("seeded the %d season (%s) and %d people", seedYear, seedState, len(cast))
+	log.Printf("seeded the %d season (%s, theme %s) and %d people", seedYear, seedState, seedThemePack, len(cast))
 	log.Printf("sign in at /auth/login and pick one of them")
 	return nil
 }
@@ -218,16 +229,17 @@ type querier interface {
 // surface every handler can reach.
 func upsertSeason(ctx context.Context, q querier) (uuid.UUID, error) {
 	const stmt = `
-INSERT INTO season (year, name, state, default_submit_limit, submit_opens_at, vote_opens_at)
-VALUES ($1, $2, $3, 2, now() - interval '1 day', now() + interval '14 days')
+INSERT INTO season (year, name, state, theme_pack, default_submit_limit, submit_opens_at, vote_opens_at)
+VALUES ($1, $2, $3, $4, 2, now() - interval '1 day', now() + interval '14 days')
 ON CONFLICT (year) DO UPDATE
-SET state = EXCLUDED.state,
-    name  = EXCLUDED.name
+SET state      = EXCLUDED.state,
+    name       = EXCLUDED.name,
+    theme_pack = EXCLUDED.theme_pack
 RETURNING id`
 
 	var id uuid.UUID
 	name := fmt.Sprintf("Night of a Thousand Pixels %d", seedYear)
-	if err := q.QueryRow(ctx, stmt, seedYear, name, seedState).Scan(&id); err != nil {
+	if err := q.QueryRow(ctx, stmt, seedYear, name, seedState, seedThemePack).Scan(&id); err != nil {
 		return uuid.Nil, fmt.Errorf("upsert season %d: %w", seedYear, err)
 	}
 	return id, nil

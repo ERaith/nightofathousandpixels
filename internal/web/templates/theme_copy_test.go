@@ -33,6 +33,8 @@ func testPack() viewmodel.Theme {
 		viewmodel.KeyStateSubmittingLabel:   "PACK-STATE-LABEL",
 		viewmodel.KeyStateSubmittingSummary: "PACK-STATE-SUMMARY",
 		viewmodel.KeyQuotaAtLimit:           "PACK-QUOTA-USED-ALL-{count}",
+		viewmodel.KeyQuotaRemaining:         "PACK-QUOTA-{count}-OF-{limit}",
+		viewmodel.KeyQuotaHeading:           "PACK-QUOTA-HEADING",
 		viewmodel.KeyBlockedAtLimitHeading:  "PACK-CAP-HEADING",
 		viewmodel.KeyBlockedAtLimitDated:    "{quota} PACK-CAP-BODY {date}",
 		viewmodel.KeyBlockedLockedHeading:   "PACK-LOCKED-HEADING",
@@ -131,6 +133,78 @@ func TestAPackOwnsTheWordForAFilm(t *testing.T) {
 
 	if !strings.Contains(page, "6 PACK-FILMS PACK-ON-THE-BOARD") {
 		t.Errorf("the count heading did not use the pack's plural noun:\n%s", mainContent(t, page))
+	}
+}
+
+// The button on the full board, which is the one control most people on this
+// site ever press.
+//
+// This had a test-pack string reserved for it (KeySlateSubmitCTA) and both
+// shipped packs wrote one, and the template printed "Put a movie up" anyway —
+// hardcoded, for as long as the key had existed. Nothing caught it, because
+// every other test on this page renders with no pack and "Put a movie up" is
+// also what BaseCopy says, so the literal and the correct answer were the same
+// string. It took loading the page under a pack whose voice is nothing like the
+// base's to see it.
+func TestAPackOwnsTheButtonOnTheFullBoard(t *testing.T) {
+	p := viewmodel.FixtureFullSlate()
+	p.Layout = themedLayout()
+
+	page := render(t, templates.SlatePage(p))
+
+	if !strings.Contains(page, "PACK-SUBMIT-CTA") {
+		t.Errorf("the board's submit button is not the pack's:\n%s", mainContent(t, page))
+	}
+	if strings.Contains(page, "Put a movie up") {
+		t.Errorf("the base label survived a pack that replaced it")
+	}
+}
+
+// The allowance, in the season strip on the slate and on the submit form.
+//
+// Theme.QuotaLabel exists for exactly this and carries a long comment saying
+// why it was worth a second method — and both templates that print the
+// allowance called the unthemed SubmitQuota.Label instead. Only the two blocked
+// pages, which assemble the sentence through submit.go, ever went near the
+// themed one. So a pack could rewrite the refusal it gets when it says no and
+// not the same sentence on the page that says yes.
+func TestAPackOwnsTheAllowanceWhereverItIsShown(t *testing.T) {
+	slate := viewmodel.FixtureFullSlate()
+	slate.Layout = themedLayout()
+
+	submit := viewmodel.FixtureSubmit()
+	submit.Layout = themedLayout()
+
+	for _, tc := range []struct {
+		name string
+		page string
+	}{
+		{"slate", render(t, templates.SlatePage(slate))},
+		{"submit", render(t, templates.SubmitPage(submit))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(tc.page, "PACK-QUOTA-") {
+				t.Errorf("the allowance is in the base voice:\n%s", mainContent(t, tc.page))
+			}
+			if strings.Contains(tc.page, "left of") {
+				t.Errorf("the base allowance sentence survived a pack that replaced it")
+			}
+		})
+	}
+}
+
+// The heading over it, which was a literal in slate.templ.
+func TestAPackOwnsTheAllowanceHeading(t *testing.T) {
+	p := viewmodel.FixtureFullSlate()
+	p.Layout = themedLayout()
+
+	page := render(t, templates.SlatePage(p))
+
+	if !strings.Contains(page, "PACK-QUOTA-HEADING") {
+		t.Errorf("the allowance heading is not the pack's:\n%s", mainContent(t, page))
+	}
+	if strings.Contains(page, "Your picks") {
+		t.Errorf("the base allowance heading survived a pack that replaced it")
 	}
 }
 

@@ -446,9 +446,12 @@ check: templ-fresh vet lint test themes-check test-integration ## Run every gate
 # The theme-pack contract is enforced in CSS and checked by a stdlib-only
 # python script; no node, no npm, nothing to install.
 .PHONY: themes-check
-themes-check: ## Check the theme tooling and the fallback palette's contrast
+themes-check: ## Check the theme tooling, the fallback palette and every shipped pack
 	python3 -m unittest discover -s themes -p 'test_*.py'
 	./themes/check-contrast.py --defaults
+	@# Every pack on disk, not a named list: a pack added in September is
+	@# checked in October without anybody remembering to add it here.
+	@for m in themes/*/manifest.json; do ./themes/check-contrast.py "$$m" || exit 1; done
 
 # ---------------------------------------------------------------------------
 # Migrations

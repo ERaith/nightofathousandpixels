@@ -1,16 +1,21 @@
 # Theme packs
 
-Night of a Thousand Pixels gets a new look every year. 2025 was ALIEN; 2026
-will be Portal or Elvira, decided in late September. The point of a theme
-*pack* is that swapping that look is a content change, not a rewrite.
+Night of a Thousand Pixels gets a new look every year. 2025 was ALIEN, built
+into the Next.js site that is now in `archive/2025`. Portal and Elvira were
+built for 2026 and Elvira was shipped; Eraith looked at it and asked for the
+2025 look back, so `weyland/` is that look ported into a pack and it is what
+the 2026 season wears. Elvira and Portal stay in the registry.
+
+That round trip is the argument for theme packs in one paragraph: the site
+changed its entire identity twice, and neither time was a rewrite.
 
 A pack owns **colours, fonts, copy and assets**. That is the whole list.
 Layout and accessibility live in `static/css/base.css` and are not
 negotiable, because the 2025 site hardcoded its theme and we are not doing
 that again.
 
-Ticket F4 builds the Portal and Elvira packs. This file is the contract
-they have to satisfy.
+Ticket F4 built Portal and Elvira; nap-e6e added Weyland-Yutani. This file is
+the contract all three have to satisfy.
 
 ---
 
@@ -57,7 +62,7 @@ a wrapper div will not be picked up.
 | `--border` | Colour of rules, card edges and table lines | Aim for 3:1 against `--bg`. Form-control and button borders ignore this and derive their own colour, so a subtle value here cannot make an input disappear. |
 | `--radius` | Corner radius | A single length. `0` for something brutalist, `999px` for something soft. |
 | `--shadow` | Card shadow | Any valid `box-shadow`, or `none`. |
-| `--backdrop` | A decorative background layer painted behind the page | Any valid `background` value. It is `position: fixed`, `pointer-events: none`, `z-index: -1`, cannot create scroll, and is hidden in print. |
+| `--backdrop` | A decorative background layer painted behind the page | Any valid `background` value, including per-layer position, size and repeat — `url(...) left bottom / 320px no-repeat`. It is `position: fixed`, `pointer-events: none`, `z-index: -1`, cannot create scroll, and is hidden in print. Because it is painted on a fixed element, size it against the viewport (`min(34vw, 280px)`) rather than in flat pixels, or a corner marking on a desktop becomes half the screen on a phone. |
 | `--color-scheme` | `dark`, `light`, or `light dark` | Drives native scrollbars, form widgets and the caret. Set it to match your palette or the browser's own chrome will fight you. |
 
 ## What a pack must never do
@@ -91,7 +96,9 @@ a wrapper div will not be picked up.
 - **Never shrink an interactive element below 44×44px.**
 
 Assets (fonts, background images, icons) belong in the pack's own
-directory: `themes/portal/`, `themes/elvira/`.
+directory: `themes/weyland/`, `themes/elvira/`, `themes/portal/`. A pack
+references its own assets by the URL they are served at,
+`/theme/<name>/assets/<file>` — see `themes/weyland/theme.css`.
 
 ---
 
@@ -319,8 +326,9 @@ On a deployed site the same thing is `?theme=`, which works on any page for
 a season admin (`season_member.is_admin`) and nobody else:
 
 ```
-/?theme=portal
+/?theme=weyland
 /?theme=elvira
+/?theme=portal
 /?theme=none      <- the unthemed site, asked for on purpose
 ```
 
@@ -335,7 +343,7 @@ October looking at a pack nobody else can see.
 
 ### The list to walk
 
-Under both packs, at 320px and on a desktop:
+Under every pack, at 320px and on a desktop:
 
 - the slate, empty — the morning of 1 October, and the state most people see
   first;

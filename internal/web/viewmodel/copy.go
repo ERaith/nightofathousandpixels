@@ -110,6 +110,12 @@ const (
 	KeyQuotaAtLimit   = "quota.at_limit"
 	KeyQuotaRemaining = "quota.remaining"
 
+	// The heading over that sentence in the season strip. It was a literal in
+	// slate.templ, sitting one line above a sentence a pack owns, so a pack
+	// with any voice at all got "YOUR PICKS" in the site's default register
+	// over its own words.
+	KeyQuotaHeading = "quota.heading"
+
 	// Front page.
 	KeyHomeLead         = "home.lead"
 	KeyHomeNoticeLede   = "home.notice.lede"
@@ -249,6 +255,7 @@ var BaseCopy = Copy{
 	KeyQuotaBarred:    "You can vote this year, but not put films on the board.",
 	KeyQuotaAtLimit:   "You have used all {count} for this year.",
 	KeyQuotaRemaining: "{count} left of {limit}.",
+	KeyQuotaHeading:   "Your picks",
 
 	KeyHomeLead: "Thirty-odd friends, two picks each, and one instant-runoff count " +
 		"that decides what goes on the screen.",

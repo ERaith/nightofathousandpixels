@@ -156,7 +156,7 @@ templ EmptySlatePreview() {
 // no quota is real too — that is everybody who is signed out.
 templ SeasonStrip(p Slate) {
 	{{ date := seasonNextDate(p.Layout.Theme, p.Season) }}
-	{{ quota := p.Quota.Label() }}
+	{{ quota := p.Layout.QuotaLabel(p.Quota) }}
 	if date.Set() || quota != "" {
 		<div class="season-strip">
 			if date.Set() {
@@ -167,7 +167,7 @@ templ SeasonStrip(p Slate) {
 			}
 			if quota != "" {
 				<div class="season-strip__cell season-strip__cell--aside">
-					<p class="season-strip__label mb-0">Your picks</p>
+					<p class="season-strip__label mb-0">{ p.Layout.Text(viewmodel.KeyQuotaHeading) }</p>
 					<p class="season-strip__value mb-0">{ quota }</p>
 				</div>
 			}
@@ -193,7 +193,7 @@ templ SeasonStrip(p Slate) {
 templ SlateActions(p Slate) {
 	if p.CanSubmit && p.SubmitHref != "" {
 		<div class="cluster">
-			<a class="btn btn--primary" href={ p.SubmitHref }>Put a movie up</a>
+			<a class="btn btn--primary" href={ p.SubmitHref }>{ p.Layout.Text(viewmodel.KeySlateSubmitCTA) }</a>
 		</div>
 	} else if p.Quota.Label() == "" && p.Layout.SignInHref != "" {
 		// No quota at all and a way in: signed out. A member who simply

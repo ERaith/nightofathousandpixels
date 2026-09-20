@@ -73,7 +73,7 @@ templ SubmitFormSection(p Submit) {
 		<form class="panel" method="post" action={ p.Action }>
 			// Your allowance, at the top of the thing it constrains. It was a
 			// line of grey body text before, which is where the eye goes last.
-			if label := p.Quota.Label(); label != "" {
+			if label := p.Layout.QuotaLabel(p.Quota); label != "" {
 				<p class="badge badge--accent">{ label }</p>
 			}
 			@formRow(fields.Title) {

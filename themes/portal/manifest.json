@@ -35,6 +35,7 @@
     "quota.barred": "You are cleared to evaluate this cycle, but not to propose.",
     "quota.at_limit": "You have entered all {count} permitted this cycle.",
     "quota.remaining": "{count} remaining of {limit}.",
+    "quota.heading": "Your proposals",
 
     "home.lead": "Thirty-one volunteers propose up to two candidate films each. A ranked, instant-runoff evaluation selects the one that will be screened. Participation is, technically, voluntary.",
     "home.notice.lede": "Facility notice.",

@@ -239,7 +239,17 @@ body {
 }
 
 /* A pack may paint a decorative backdrop here. It sits behind everything,
-   is never interactive, and is pinned so it cannot create scroll. */
+   is never interactive, and is pinned so it cannot create scroll.
+
+   The token is dropped into the `background` shorthand and nothing follows
+   it, so a pack controls position, size and repeat per layer the ordinary
+   way -- `url(x) left bottom / 320px no-repeat`. This used to end with a
+   `background-size: cover`, which quietly overrode every size a pack wrote
+   and stretched a corner marking across the viewport. It cost nothing to
+   keep while the only two packs painted gradients, because a gradient fills
+   its box either way; the first pack to put an image in a backdrop found it
+   immediately. A pack that does want the old behaviour writes `/ cover` in
+   its own value, where it is visible. */
 body::before {
   content: "";
   position: fixed;
@@ -247,7 +257,6 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background: var(--backdrop, none);
-  background-size: cover;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -811,11 +820,29 @@ hr {
 
    min() is what keeps 320px honest: the track can never demand more than
    the container has, so the grid collapses to one column instead of
-   overflowing. */
+   overflowing.
+
+   align-items: start is the other half of the board, and it is the one that
+   took a second look. A grid stretches its items by default, so every card in
+   a row is as tall as the tallest, and a flex column packs its content at the
+   top -- which means the film with a one-line description and no trailer gets
+   the same height as the one whose title runs to ninety characters, and pays
+   for it with three hundred empty pixels under its credit line. That is not
+   padding. It reads as a card that failed to finish loading, and there were
+   three of them on a six-film board.
+
+   Letting each card take its own height leaves the row ragged along the
+   bottom. That is the correct trade: the cards are bordered, shadowed and
+   visibly separate, so uneven bottoms read as cards, while a void inside a
+   border reads as a bug. It is also the only fix that does not move something
+   else -- pinning the footer down instead just relocates the hole to between
+   the media box and the rule above the credit, which is worse, and is why
+   .card__footer below does not do that. */
 .card-grid {
   display: grid;
   gap: var(--_sp-4);
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  align-items: start;
   padding: 0;
   margin: 0;
   list-style: none;
@@ -957,7 +984,16 @@ hr {
   overflow-wrap: anywhere;
 }
 
-/* Actions sit on the bottom edge so cards of different heights line up. */
+/* Actions are the last thing in the card.
+
+   margin-block-start: auto pushed them onto the bottom edge back when the grid
+   stretched every card to the height of the tallest in its row. The grid sets
+   align-items: start now, so a card is exactly as tall as its content and
+   there is no free space left for the auto margin to claim -- it does nothing
+   today, anywhere. It stays because it costs nothing and is still the right
+   answer for a card that does have slack in it, which is any card given a
+   height: a row that goes back to stretching, or a single card laid out
+   beside something taller. */
 .card__actions {
   margin-block-start: auto;
   padding-block-start: var(--_sp-2);

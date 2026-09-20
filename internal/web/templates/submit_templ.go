@@ -231,7 +231,7 @@ func SubmitFormSection(p Submit) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if label := p.Quota.Label(); label != "" {
+		if label := p.Layout.QuotaLabel(p.Quota); label != "" {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<p class=\"badge badge--accent\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
