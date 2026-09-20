@@ -1,6 +1,11 @@
 package board
 
 import (
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"strings"
 	"testing"
 
@@ -157,5 +162,69 @@ func TestValidateCountsCharactersNotBytes(t *testing.T) {
 
 	if _, errs := validate(viewmodel.SubmitForm{Title: title}); errs.Any() {
 		t.Errorf("rejected a %d-character title: %+v", len([]rune(title)), errs)
+	}
+}
+
+// isAlreadyUp: the classification behind the errAlreadyUp catch on the edit
+// path.
+//
+// It is unit-tested directly rather than through updateSubmission because the
+// condition is currently unreachable there -- tmdb_id is carried over from the
+// stored row, so the UPDATE rewrites the value it already holds. That is
+// exactly why the classification needs a test of its own: an untested branch
+// guarding an unreachable case is how the guard turns out to be wrong on the
+// day it finally runs.
+func TestIsAlreadyUpRecognisesOnlyAUniqueViolation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "the partial unique index firing",
+			err:  &pgconn.PgError{Code: "23505", ConstraintName: "movie_season_tmdb_unique_idx"},
+			want: true,
+		},
+		{
+			// Wrapped, because the write path wraps before anything sees it.
+			name: "wrapped",
+			err:  fmt.Errorf("update movie: %w", &pgconn.PgError{Code: "23505"}),
+			want: true,
+		},
+		{
+			// A different integrity failure must NOT be reported to somebody
+			// as "that film is already on the board" -- it is a 500 and needs
+			// a log line, not a sentence about a film.
+			name: "a foreign key violation",
+			err:  &pgconn.PgError{Code: "23503"},
+			want: false,
+		},
+		{
+			name: "a check constraint",
+			err:  &pgconn.PgError{Code: "23514"},
+			want: false,
+		},
+		{
+			name: "not a database error at all",
+			err:  errors.New("context deadline exceeded"),
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isAlreadyUp(tc.err); got != tc.want {
+				t.Errorf("isAlreadyUp(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

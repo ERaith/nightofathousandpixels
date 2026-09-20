@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ERaith/nightofathousandpixels/internal/audit"
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
@@ -410,6 +411,20 @@ func (s *Service) refuseEdit(w http.ResponseWriter, r *http.Request, v signin.Vi
 
 		return
 
+	case errors.Is(cause, errAlreadyUp):
+		// The one refusal here that is not about the person at all, so it is
+		// the one that keeps what they typed: they have done nothing wrong and
+		// there is a real form to come back to. 409, because the situation
+		// changed rather than permission being absent.
+		s.opts.Logger.Info("edit refused: that film is already on the board",
+			slog.String("person_id", v.Person.ID.String()),
+			slog.String("movie_id", movieID.String()),
+			slog.Int("season", int(v.Season.Year)),
+		)
+		s.rejectEdit(w, r, v, movieID, http.StatusConflict)
+
+		return
+
 	case errors.Is(cause, errNotMember), errors.Is(cause, errBarred):
 		s.opts.Logger.Warn("edit refused",
 			slog.String("person_id", v.Person.ID.String()),
@@ -424,6 +439,46 @@ func (s *Service) refuseEdit(w http.ResponseWriter, r *http.Request, v signin.Vi
 	default:
 		s.serverError(w, r, "edit: write", cause)
 	}
+}
+
+// isAlreadyUp reports whether err is the partial unique index on
+// (season_id, tmdb_id) refusing a second live copy of one film.
+//
+// It is a function rather than an inline errors.As so that the classification
+// has one definition and can be tested directly -- which matters here more
+// than usual, because the condition is currently UNREACHABLE through
+// updateSubmission (see there) and so cannot be exercised end to end.
+func isAlreadyUp(err error) bool {
+	var pgErr *pgconn.PgError
+
+	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
+}
+
+// rejectEdit re-renders the edit form with the film's stored values and a
+// message against the title, for a refusal the person can act on.
+//
+// It is separate from the other branches of refuseEdit because it is the only
+// one where there is still a form to come back to: every other refusal there
+// means the page itself is gone.
+func (s *Service) rejectEdit(w http.ResponseWriter, r *http.Request, v signin.Viewer, movieID uuid.UUID, status int) {
+	movie, err := s.opts.Store.GetMovie(r.Context(), movieID)
+	if err != nil {
+		s.serverError(w, r, "edit: reload for refusal", err)
+
+		return
+	}
+
+	form := formFromMovie(movie)
+	form.Errors.Add(viewmodel.FieldTitle, alreadyUpMessage)
+
+	page, err := s.editPage(r, v, movie, form)
+	if err != nil {
+		s.serverError(w, r, "edit: build refusal page", err)
+
+		return
+	}
+
+	s.render(w, r, status, templates.SubmitPage(page))
 }
 
 // notFound renders the site's 404 for a viewer the handler already knows, so
@@ -464,6 +519,15 @@ func (s *Service) badForm(w http.ResponseWriter, r *http.Request) {
 //  3. The row is still theirs, still in this season and still on the board.
 //  4. The update goes in, and the audit row goes in with it.
 //
+// The errAlreadyUp catch on that update is for a case this function cannot
+// currently reach, and that is deliberate rather than an oversight. tmdb_id is
+// carried over from the stored row, so the UPDATE rewrites the value it
+// already holds and cannot collide with itself. It becomes reachable the
+// moment the edit form can change tmdb_id -- which is nap-eie's TMDB search
+// arriving on this form -- and at that point an uncaught unique violation is a
+// 500, appearing in a merge that neither branch's author wrote. Two lines now
+// is cheaper than that.
+//
 // The membership row is locked for the same reason the submit path locks it,
 // even though an edit changes no count: it serialises this transaction against
 // that person's own concurrent submission, so a second tab cannot read a count
@@ -477,6 +541,12 @@ func (s *Service) updateSubmission(ctx context.Context, v signin.Viewer, movieID
 			return zero, errAlreadyWithdrawn
 		}
 
+		// TmdbID comes from the row re-read inside this transaction, never
+		// from the form. UpdateMovie sets the column unconditionally, so
+		// passing nil here would silently clear a real id -- and because
+		// movie_season_tmdb_unique_idx is partial on tmdb_id IS NOT NULL,
+		// clearing it does not fail, it just quietly stops that film being
+		// deduplicated for the rest of the season.
 		updated, err := q.UpdateMovie(ctx, store.UpdateMovieParams{
 			ID:          movie.ID,
 			Title:       d.title,
@@ -486,6 +556,10 @@ func (s *Service) updateSubmission(ctx context.Context, v signin.Viewer, movieID
 			Description: d.description,
 		})
 		if err != nil {
+			if isAlreadyUp(err) {
+				return zero, errAlreadyUp
+			}
+
 			return zero, fmt.Errorf("update movie: %w", err)
 		}
 

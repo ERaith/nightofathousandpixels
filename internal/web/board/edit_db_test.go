@@ -495,3 +495,73 @@ func TestEditRefusesAFilmThatIsNotThere(t *testing.T) {
 		t.Errorf("withdraw of a film that does not exist: got %v, want errNotFound", err)
 	}
 }
+
+// TestUnWithdrawingWouldCollideOnceTMDBIdsAreReal is a hazard note with a
+// failing case behind it, aimed at whoever builds un-withdraw.
+//
+// There is no un-withdraw today: SetMovieHidden is called in exactly one place
+// in this package, with Hidden: true. This test exists because the obvious
+// implementation of the missing half -- flip the flag back -- is wrong, and
+// wrong in a way that only appeared when builder-14's nap-eie started writing
+// real tmdb_ids.
+//
+// movie_season_tmdb_unique_idx is UNIQUE (season_id, tmdb_id) WHERE tmdb_id IS
+// NOT NULL AND NOT hidden. Withdrawing a film therefore FREES its id for
+// somebody else, which is deliberate and is what migration 00004's own comment
+// promises. The consequence nobody wrote down is the other direction: once
+// somebody else has taken the id, the original cannot come back, and a bare
+// UPDATE ... SET hidden = false is a 23505 rather than a no-op.
+//
+// So un-withdraw has to re-check the slot and refuse with alreadyUpMessage,
+// the same sentence the submit path uses. It is not a flag flip.
+func TestUnWithdrawingWouldCollideOnceTMDBIdsAreReal(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 2)
+	s := newDBService(pool)
+	ctx := context.Background()
+
+	alice := f.person(t, "alice")
+	f.member(t, alice, nil)
+	bob := f.person(t, "bob")
+	f.member(t, bob, nil)
+
+	const tmdbID = 1858 // Transformers, chosen for its unarguable awfulness.
+
+	hers, err := s.createSubmission(ctx, f.seasonID, alice, aDraft("Hers First"))
+	if err != nil {
+		t.Fatalf("submission: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE movie SET tmdb_id = $2 WHERE id = $1`, hers.ID, tmdbID); err != nil {
+		t.Fatalf("set tmdb_id: %v", err)
+	}
+
+	// She withdraws, which frees the id. This is the supported operation and
+	// it must keep working.
+	if _, err := s.withdrawSubmission(ctx, f.viewerFor(t, alice), hers.ID); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+
+	his, err := s.createSubmission(ctx, f.seasonID, bob, aDraft("His Now"))
+	if err != nil {
+		t.Fatalf("second submission: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE movie SET tmdb_id = $2 WHERE id = $1`, his.ID, tmdbID); err != nil {
+		t.Fatalf("the withdrawal did not free the tmdb id: %v", err)
+	}
+
+	// And now the trap. No handler does this today; the point is what happens
+	// when one does.
+	_, err = pool.Exec(ctx, `UPDATE movie SET hidden = false WHERE id = $1`, hers.ID)
+	if err == nil {
+		t.Fatal("un-hiding a film whose tmdb id somebody else has taken succeeded. " +
+			"Either movie_season_tmdb_unique_idx has changed or this hazard is gone; " +
+			"check before deleting this test, because un-withdraw depends on it")
+	}
+	if !isAlreadyUp(err) {
+		t.Fatalf("un-hiding failed with something other than a unique violation: %v", err)
+	}
+
+	// isAlreadyUp is what the edit path maps to errAlreadyUp, so un-withdraw
+	// can reuse it and say the same sentence rather than inventing a second.
+	t.Logf("un-withdraw must map this to alreadyUpMessage: %v", err)
+}
