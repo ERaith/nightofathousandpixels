@@ -37,6 +37,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/auth"
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
+	"github.com/ERaith/nightofathousandpixels/internal/tmdb"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
 	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
@@ -122,6 +123,17 @@ type Options struct {
 	// the public slate. Blank renders no such control.
 	SignInHref string
 
+	// TMDB turns the submit form into a search (ticket nap-eie).
+	//
+	// Nil is a supported value and is what New leaves it as. It is the state
+	// every dev stack without a TMDB_API_KEY is in, and the state the site is
+	// in if TMDB ever withdraws the key: the submit page renders the four
+	// typed boxes it has always had, with no search box and no apology for
+	// one. A nil *tmdb.Client answers Enabled() false and ErrNoAPIKey rather
+	// than panicking, which is why this is one field and not a field and a
+	// bool.
+	TMDB *tmdb.Client
+
 	Logger *slog.Logger
 
 	// Origin and Theme are passed through to every page, so these look like
@@ -185,6 +197,11 @@ func (s *Service) Routes(r chi.Router) {
 	r.With(s.opts.RequireMember).Group(func(r chi.Router) {
 		r.Get(SubmitPath, s.handleSubmitForm)
 		r.Post(SubmitPath, s.handleSubmitPost)
+		// Inside the gate with the form it belongs to, and for two reasons:
+		// it serves a fragment of a page strangers may not see, and every
+		// request on it spends a call against our TMDB key. Mounted outside,
+		// it would be a rate limit anybody could exhaust on our behalf.
+		r.Get(SearchPath, s.handleSearch)
 	})
 
 	// Changing or withdrawing a film you already put up (ticket E3). It lives

@@ -12,9 +12,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
+	"github.com/ERaith/nightofathousandpixels/internal/tmdb"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
 	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
@@ -70,18 +72,59 @@ var (
 
 	// errAtLimit is a member who has used every pick.
 	errAtLimit = errors.New("board: no picks left")
+
+	// errAlreadyUp is the film being on the board already, from
+	// movie_season_tmdb_unique_idx.
+	//
+	// It could not happen before ticket nap-eie: tmdb_id was written as NULL
+	// on every row, and the index is partial on tmdb_id IS NOT NULL, so it has
+	// never once fired. Now that real ids are stored, two people picking the
+	// same film in one season is an ordinary Tuesday -- it is precisely what
+	// the index exists to stop, because two rows for one film split the
+	// ranked-choice vote between them.
+	//
+	// It is caught rather than prevented by a lookup first, and that is the
+	// point: a SELECT before the INSERT would still leave a window for two
+	// simultaneous submissions, and the database has the only answer that
+	// cannot be raced. Unlike every other sentinel here, this one refuses a
+	// submission for a reason that has nothing to do with the person -- so it
+	// is the one refusal that keeps the form's contents (see refuse).
+	errAlreadyUp = errors.New("board: that film is already on the board")
 )
 
-// handleSubmitForm renders the form (ticket E1, nap-ibx).
+// uniqueViolation is Postgres's SQLSTATE for a unique index violation.
+const uniqueViolation = "23505"
+
+// handleSubmitForm renders the form (ticket E1, nap-ibx), with the TMDB picker
+// above it (ticket E10, nap-eie).
+//
+// One GET serves three states, which is what keeps the picker working with no
+// JavaScript at all:
+//
+//	/submit                  the empty form, and an empty search box.
+//	/submit?q=blade+run      the same page with the results listed on it.
+//	/submit?tmdb_id=78       the same page with the form filled in from TMDB.
+//
+// The second is what pressing enter in the search box does without htmx; the
+// third is what clicking a result does, ever. htmx changes only which of these
+// is fetched as a fragment rather than as a page.
 func (s *Service) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
 	v := signin.MustCurrent(r.Context())
+	query := r.URL.Query()
 
-	page, err := s.submitPage(r, v, viewmodel.SubmitForm{})
+	// The lookup, not the query string, decides what goes in the boxes. An id
+	// naming no film comes back as a zero form, so a hand-edited URL gets the
+	// manual page rather than an error.
+	form, picked, _ := s.lookupPicked(r.Context(), parseTMDBID(query.Get(viewmodel.FieldTMDBID)))
+
+	page, err := s.submitPage(r, v, form)
 	if err != nil {
 		s.serverError(w, r, "submit: build page", err)
 
 		return
 	}
+	page.Picked = picked
+	page.Search = s.search(r.Context(), query.Get(viewmodel.FieldQuery))
 
 	s.render(w, r, http.StatusOK, templates.SubmitPage(page))
 }
@@ -125,27 +168,50 @@ func (s *Service) handleSubmitPost(w http.ResponseWriter, r *http.Request) {
 		Description: r.PostFormValue(viewmodel.FieldDescription),
 	}
 
+	form, picked := s.authoritative(r.Context(), form, r.PostFormValue(viewmodel.FieldTMDBID))
+
 	draft, errs := validate(form)
+	if picked != nil {
+		// Set after validation, not inside it. validate's job is what a person
+		// typed; this is a fact the server established, and it has no field to
+		// put an error beside.
+		id32 := int32(picked.ID)
+		draft.tmdbID = &id32
+	}
 	if errs.Any() {
 		form.Errors = errs
-		page, err := s.submitPage(r, v, form)
-		if err != nil {
-			s.serverError(w, r, "submit: build page", err)
-
-			return
-		}
 
 		// 422 rather than 200: the request was well-formed and the server
 		// understood it and would not act on it, which is what the code is
 		// for. A browser renders the body either way, so nothing about the
 		// page depends on this — it is what a log or a test sees.
-		s.render(w, r, http.StatusUnprocessableEntity, templates.SubmitPage(page))
+		s.rejectForm(w, r, v, form, picked, http.StatusUnprocessableEntity)
 
 		return
 	}
 
 	movie, err := s.createSubmission(r.Context(), v.Season.ID, v.Person.ID, draft)
 	if err != nil {
+		// The film already being up is the one refusal that is not about this
+		// person, so it is the one that does not take the form away. They
+		// picked a film somebody else had already picked; the answer is to
+		// pick a different one, and the page they need for that is this page,
+		// with their sentence still in the box.
+		if errors.Is(err, errAlreadyUp) {
+			s.opts.Logger.Info("submission refused: film already on the board",
+				slog.String("person_id", v.Person.ID.String()),
+				slog.Int("season", int(v.Season.Year)),
+				slog.String("title", draft.title),
+			)
+
+			form.Errors.Add(viewmodel.FieldTitle, alreadyUpMessage)
+			// 409: the situation changed under them, which is exactly what
+			// this is — it was submittable when the page was rendered.
+			s.rejectForm(w, r, v, form, picked, http.StatusConflict)
+
+			return
+		}
+
 		s.refuse(w, r, v, err)
 
 		return
@@ -159,6 +225,124 @@ func (s *Service) handleSubmitPost(w http.ResponseWriter, r *http.Request) {
 	)
 
 	http.Redirect(w, r, SlatePath+"?"+addedParam+"="+url.QueryEscape(movie.ID.String()), http.StatusSeeOther)
+}
+
+// authoritative replaces everything the browser claimed about the film with
+// what TMDB says, given only the id.
+//
+// ---------------------------------------------------------------------------
+// This is the whole of "never trust the returned fields on POST".
+// ---------------------------------------------------------------------------
+//
+// A search preceded this submission, and that buys exactly nothing. The form
+// is a round trip through a machine somebody else controls, and it can come
+// back with any title, any year and any trailer URL attached to any tmdb_id.
+// So rawID is taken as an identifier -- the one thing it is -- and the facts
+// are fetched again, from TMDB, here.
+//
+// Concretely: a POST claiming tmdb_id 78 with the title "something else" and a
+// trailer pointing anywhere at all stores Blade Runner, 1982 and TMDB's
+// trailer. The worst a tampered id can do is submit a different real film,
+// which is something the person could have done by searching for it.
+//
+// Two things are deliberately NOT re-fetched:
+//
+// Description stays as typed. The box is labelled "Why this one", so
+// overwriting it would delete the sentence somebody wrote in favour of a
+// synopsis they had already replaced on purpose. It is free text bounded by
+// maxDescriptionLen, exactly as it was before this ticket -- nothing about its
+// trust level changed.
+//
+// An id TMDB cannot confirm is dropped rather than refused. It means either
+// that TMDB has no such film or that TMDB did not answer, and in both cases
+// the person still typed a title and the boxes they can see are what the
+// server then judges. tmdb_id is left nil, so nothing is ever stored against
+// an id that was not confirmed -- which is what keeps a bad id out of the
+// dedupe index rather than poisoning it.
+func (s *Service) authoritative(
+	ctx context.Context,
+	form viewmodel.SubmitForm,
+	rawID string,
+) (viewmodel.SubmitForm, *tmdb.Details) {
+	id := parseTMDBID(rawID)
+	if id <= 0 {
+		// A manual submission. Anything the form claimed about a TMDB id is
+		// cleared, so that a hand-crafted POST cannot half-set the state.
+		form.TMDBID = ""
+
+		return form, nil
+	}
+
+	confirmed, _, details := s.lookupPicked(ctx, id)
+	if details == nil {
+		form.TMDBID = ""
+
+		return form, nil
+	}
+
+	form.TMDBID = confirmed.TMDBID
+	form.Title = confirmed.Title
+	form.Year = confirmed.Year
+	form.TrailerURL = confirmed.TrailerURL
+
+	return form, details
+}
+
+// alreadyUpMessage is what somebody is told when their film is already on the
+// board.
+//
+// It is a plain message rather than a copy key because it is a fact about the
+// season rather than the site's voice, and it is against the title field
+// because the title is what identifies the film to the person reading. It
+// deliberately does not name who submitted it: the slate is one click away and
+// says so itself, and "Dave already put this up" invites a conversation the
+// site should not be starting.
+const alreadyUpMessage = "That one is already on the board this year — two copies would split the vote. " +
+	"Pick something else, or check the slate to see whose it is."
+
+// rejectForm re-renders the submit page with the form's contents intact.
+//
+// It is the path for everything that is wrong with the SUBMISSION, as opposed
+// to wrong with the person's standing — a bad year, a film already up. The
+// form comes back, so does what they typed, and so does the picked film: a
+// page that answered "that is already up" by emptying the boxes would make
+// somebody retype a paragraph to change one thing.
+//
+// Picked is rebuilt from the TMDB details the POST already fetched rather than
+// looked up again. It is the same data, it costs nothing, and it keeps the
+// chosen film visible above a form whose title box is read-only — without it
+// the page would show a locked title with nothing explaining why.
+func (s *Service) rejectForm(
+	w http.ResponseWriter,
+	r *http.Request,
+	v signin.Viewer,
+	form viewmodel.SubmitForm,
+	picked *tmdb.Details,
+	status int,
+) {
+	page, err := s.submitPage(r, v, form)
+	if err != nil {
+		s.serverError(w, r, "submit: build page", err)
+
+		return
+	}
+
+	// The search box comes back empty rather than carrying the last query.
+	// This is a POST: there is no q on it, and re-running the search somebody
+	// made two minutes ago would be a second call to TMDB to redisplay a list
+	// they have already finished with.
+	page.Search = s.search(r.Context(), "")
+
+	if picked != nil {
+		page.Picked = viewmodel.Picked{
+			TMDBID:    viewmodel.TMDBIDString(picked.ID),
+			Label:     picked.Label(),
+			PosterURL: picked.PosterURL(),
+			ClearHref: SubmitPath,
+		}
+	}
+
+	s.render(w, r, status, templates.SubmitPage(page))
 }
 
 // refuse re-renders the submit page for a submission the transaction turned
@@ -293,6 +477,22 @@ type draft struct {
 	year        *int32
 	trailerURL  *string
 	description string
+
+	// tmdbID is the film's TMDB id, or nil for a manual submission.
+	//
+	// It is set by the handler after validation rather than by validate,
+	// because it is not something anybody typed: it is what the server looked
+	// up and confirmed. Nil is not a degraded row -- movie.tmdb_id has been
+	// nullable since migration 00004 and every row written before this ticket
+	// has one.
+	//
+	// Writing it for the first time switches on a constraint that has been
+	// dormant: movie_season_tmdb_unique_idx is UNIQUE (season_id, tmdb_id)
+	// WHERE tmdb_id IS NOT NULL AND NOT hidden, so the same film can now only
+	// be live once per season. That is a feature and not a side effect -- two
+	// people submitting the same film split the ranked-choice vote -- but it
+	// means createSubmission has a new way to fail. See errAlreadyUp.
+	tmdbID *int32
 }
 
 // validate turns what was typed into either a draft or a set of per-field
@@ -484,11 +684,24 @@ func (s *Service) createSubmission(ctx context.Context, seasonID, personID uuid.
 		SubmittedBy: personID,
 		Title:       d.title,
 		Year:        d.year,
-		TmdbID:      nil,
+		TmdbID:      d.tmdbID,
 		TrailerUrl:  d.trailerURL,
 		Description: d.description,
 	})
 	if err != nil {
+		// The film is already up. Only movie_season_tmdb_unique_idx can
+		// produce a 23505 on this table -- the other unique constraint,
+		// movie_season_id_id_key, is on (season_id, id) where id is a fresh
+		// gen_random_uuid() -- but the index is named rather than assumed, so
+		// that a unique constraint added later becomes a 500 somebody
+		// investigates instead of a wrong explanation somebody believes.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == uniqueViolation &&
+			pgErr.ConstraintName == "movie_season_tmdb_unique_idx" {
+			return zero, errAlreadyUp
+		}
+
 		return zero, fmt.Errorf("insert movie: %w", err)
 	}
 

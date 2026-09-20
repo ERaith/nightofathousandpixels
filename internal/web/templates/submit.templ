@@ -33,6 +33,14 @@ templ SubmitPage(p Submit) {
 			}
 		</div>
 		if p.CanSubmit && p.Action != "" {
+			// The picker comes before the form, because searching is now the
+			// way this page is meant to be used and the four boxes are the
+			// fallback. Both render nothing when they have nothing to say —
+			// no TMDB key means no search box, nothing picked means no
+			// summary — so a stack with no key gets exactly the page it
+			// always had.
+			@SearchSection(p)
+			@PickedFilm(p)
 			@SubmitFormSection(p)
 		} else {
 			@SubmitBlockedSection(p)
@@ -87,13 +95,34 @@ templ SubmitFormSection(p Submit) {
 		// so that four fields and a button read as one object you are filling
 		// in and not as four things you have to get through.
 		@SubmitErrorSummary(p.Layout.Theme, fields)
+		if p.Search.Available && !p.Form.FromTMDB() {
+			// The bridge between the picker and the boxes. It only appears
+			// when there is a picker to have failed you: on a stack with no
+			// TMDB key the form below IS the way to submit, and announcing it
+			// as a fallback would be describing a feature that is not there.
+			<h2 class="h3 mb-0">{ p.Layout.Text(viewmodel.KeySearchManual) }</h2>
+		}
 		<form class="panel" method="post" action={ p.Action }>
 			// Your allowance, at the top of the thing it constrains. It was a
 			// line of grey body text before, which is where the eye goes last.
 			if label := p.Quota.Label(); label != "" {
 				<p class="badge badge--accent">{ label }</p>
 			}
+			if p.Form.FromTMDB() {
+				// The chosen film's id, and the ONLY thing on this form the
+				// server takes back from the browser. Title, year and trailer
+				// are looked up from it again on POST, so a tampered value
+				// here submits a different real film rather than a forged one
+				// — see board.handleSubmitPost.
+				<input type="hidden" name={ viewmodel.FieldTMDBID } value={ p.Form.TMDBID }/>
+			}
 			@formRow(fields.Title) {
+				// readonly, not disabled, when the film came from TMDB. The
+				// server is going to overwrite this from TMDB whatever is in
+				// the box, and a box you can type into that silently discards
+				// what you typed is the worst of the three options. readonly
+				// still posts, still reads to a screen reader, and still shows
+				// the value; "Not this one" above is how you get a box back.
 				<input
 					type="text"
 					id={ fields.Title.ID }
@@ -101,6 +130,7 @@ templ SubmitFormSection(p Submit) {
 					value={ fields.Title.Value }
 					required
 					autocomplete="off"
+					readonly?={ p.Form.FromTMDB() }
 					aria-invalid={ fields.Title.AriaInvalid() }
 					aria-describedby={ fields.Title.DescribedBy() }
 				/>
@@ -119,6 +149,7 @@ templ SubmitFormSection(p Submit) {
 					inputmode="numeric"
 					pattern="[0-9]{4}"
 					autocomplete="off"
+					readonly?={ p.Form.FromTMDB() }
 					aria-invalid={ fields.Year.AriaInvalid() }
 					aria-describedby={ fields.Year.DescribedBy() }
 				/>
@@ -133,6 +164,7 @@ templ SubmitFormSection(p Submit) {
 					autocomplete="off"
 					spellcheck="false"
 					placeholder="https://"
+					readonly?={ p.Form.FromTMDB() }
 					aria-invalid={ fields.TrailerURL.AriaInvalid() }
 					aria-describedby={ fields.TrailerURL.DescribedBy() }
 				/>

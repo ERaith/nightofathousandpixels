@@ -123,6 +123,17 @@ type SubmitPage struct {
 	// It is also gated by the same CanSubmit the form is: an edit that the
 	// season window refuses is a withdrawal the season window refuses too.
 	WithdrawAction string
+
+	// Search is the TMDB picker above the form: the search box, and whatever
+	// the last query found. Its zero value is a page with no search on it at
+	// all, which is exactly what a stack with no TMDB key should render.
+	Search SearchState
+
+	// Picked is the film chosen from that picker, or the zero value on a
+	// manual submission. When it is set the form's title, year and trailer are
+	// TMDB's answer rather than anything typed — and are looked up again on
+	// POST, so what is shown here is a preview and not the input.
+	Picked Picked
 }
 
 // HeadingCopyKey is the key for the h1: the edit wording when this page is

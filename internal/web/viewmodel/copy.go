@@ -77,6 +77,17 @@ const (
 	// PlaceholderLimit is a viewer's whole submission allowance as a bare
 	// number. It has no noun of its own: "1 pick left of 2" says the noun once.
 	PlaceholderLimit = "limit"
+
+	// PlaceholderQuery is what somebody typed into the search box, quoted by
+	// the copy around it.
+	//
+	// It is the only placeholder on this site whose value is attacker-chosen
+	// text rather than a fact from the database, which is worth naming here
+	// because the reason it is safe is not in this file: templ escapes every
+	// interpolated string, so a query containing markup renders as the
+	// characters somebody typed. Nothing that substitutes this may ever reach
+	// a context templ does not escape — an href, a style, a script.
+	PlaceholderQuery = "query"
 )
 
 // The copy keys, as constants so that a template and the catalogue cannot
@@ -211,6 +222,20 @@ const (
 	KeySubmitTrailerHint      = "submit.field.trailer.hint"
 	KeySubmitDescriptionLabel = "submit.field.description.label"
 	KeySubmitDescriptionHint  = "submit.field.description.hint"
+
+	// The TMDB picker (nap-eie). It is above the form rather than part of it,
+	// so its wording is its own group.
+	KeySearchLabel      = "submit.search.label"
+	KeySearchHint       = "submit.search.hint"
+	KeySearchButton     = "submit.search.button"
+	KeySearchPick       = "submit.search.pick"
+	KeySearchPicked     = "submit.search.picked"
+	KeySearchClear      = "submit.search.clear"
+	KeySearchEmpty      = "submit.search.empty"
+	KeySearchFailed     = "submit.search.failed"
+	KeySearchManual     = "submit.search.manual"
+	KeySearchNoPoster   = "submit.search.no_poster"
+	KeySearchResultsFor = "submit.search.results_for"
 
 	// The seven ways the submit page says no. Each is a heading and a body,
 	// and they are seven rather than one because they are seven different
@@ -366,6 +391,24 @@ var BaseCopy = Copy{
 	KeySubmitTrailerHint:      "Optional. A YouTube or Vimeo link, which plays right on the board.",
 	KeySubmitDescriptionLabel: "Why this one",
 	KeySubmitDescriptionHint:  "Optional, and the bit people actually read. A sentence is plenty.",
+
+	KeySearchLabel: "Find the film",
+	KeySearchHint: "Type a few letters of the title. Spelling it wrong is fine — " +
+		"pick it from the list and the year, the trailer and the synopsis come with it.",
+	KeySearchButton: "Search",
+	KeySearchPick:   "Pick {title}",
+	KeySearchPicked: "Going on the board",
+	KeySearchClear:  "Not this one",
+	KeySearchEmpty: "Nothing came back for {query}. Try fewer words, or the " +
+		"original title — or just type it in below, which is what the obscure ones need.",
+	KeySearchFailed: "The film database did not answer just now. Nothing is lost — " +
+		"type it in below and it goes up the same way.",
+	KeySearchManual: "Not in there? Type it in yourself.",
+	// Alt text for the placeholder tile where a poster would be. It says the
+	// poster is missing rather than describing the film, because that is the
+	// only true thing there is to say about an empty box.
+	KeySearchNoPoster:   "No poster",
+	KeySearchResultsFor: "Films matching {query}",
 
 	KeyBlockedLockedHeading: "That year is finished",
 	KeyBlockedLockedBody: "{season} is in the archive, and an archived year does not " +

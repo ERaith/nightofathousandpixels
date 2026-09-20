@@ -34,6 +34,13 @@ import (
 // See the comment in layout.templ for why its position in <head> matters.
 const BaseCSS = "/static/css/base.css"
 
+// HTMXJS is the only script this site loads, vendored under /static. A
+// constant for the same reason BaseCSS is one: no caller may move it, swap it
+// for a CDN copy, or drop it. See static/js/README.md for the version and the
+// hash, and internal/web/templates/search.templ for the one feature that uses
+// it and how that feature behaves when it does not load.
+const HTMXJS = "/static/js/htmx.min.js"
+
 // The shell types, named locally for the templates that render them. These are
 // aliases, not copies: templates.Page and viewmodel.LayoutData are one type, so
 // there is exactly one definition to change when a page needs a new field.

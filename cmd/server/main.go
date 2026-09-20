@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
 	"github.com/ERaith/nightofathousandpixels/internal/theme"
+	"github.com/ERaith/nightofathousandpixels/internal/tmdb"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
 	"github.com/ERaith/nightofathousandpixels/internal/web/admin"
 	"github.com/ERaith/nightofathousandpixels/internal/web/board"
@@ -303,6 +305,21 @@ func newRouter(
 	// season. The gate is handed over rather than reached for, so that the
 	// board depends on the shape of the whitelist check and not on the
 	// service that owns it.
+	// The film database behind the submit page's search (nap-eie). New never
+	// dials and never fails: a key that is missing or wrong is not something
+	// to refuse to start over, because the submit form works without it.
+	films := tmdb.New(tmdb.Options{
+		APIKey:  cfg.TMDBAPIKey,
+		BaseURL: cfg.TMDBBaseURL,
+	})
+	// Logged at startup because "why is there no search box" is otherwise a
+	// question with no visible answer, and because every agent's dev stack is
+	// in the disabled state on purpose.
+	logger.Info("tmdb search",
+		slog.Bool("enabled", films.Enabled()),
+		slog.String("base_url", cmp.Or(cfg.TMDBBaseURL, tmdb.DefaultBaseURL)),
+	)
+
 	board.New(board.Options{
 		Store:         queries,
 		DB:            pool,
@@ -314,6 +331,7 @@ func newRouter(
 		Nav:           nav,
 		MemberNav:     memberNav,
 		Theme:         packs.Theme(pack),
+		TMDB:          films,
 	}).Routes(r)
 
 	// The screens that run a season (ticket D3). They hold their own gate

@@ -82,6 +82,23 @@ templ Layout(p Page) {
 			// template before changing either line.
 			<link rel="stylesheet" href={ theme.PackCSS }/>
 			<link rel="stylesheet" href={ BaseCSS }/>
+			// htmx, served from our own /static rather than a CDN — see
+			// static/js/README.md for why, and for the version and its hash.
+			//
+			// `defer` rather than `async`: it must not block the first paint,
+			// and it must have run before DOMContentLoaded so that the
+			// attributes already in the markup are wired up before anybody can
+			// type into them. No integrity attribute, because same-origin
+			// bytes are already covered by whatever protects the rest of
+			// /static.
+			//
+			// It is in the shared layout rather than on the one page that uses
+			// it because it is 51KB served once and then cached for the whole
+			// session, and because the alternative — a page that injects its
+			// own script tag — is the thing a Content-Security-Policy is
+			// hardest to write around later. Today only /submit's search box
+			// uses it (nap-eie), and that page works without it.
+			<script src={ HTMXJS } defer></script>
 			<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%23101219'/%3E%3Crect%20x='3.5'%20y='3.5'%20width='4'%20height='4'%20fill='%237cc4ff'/%3E%3Crect%20x='8.5'%20y='3.5'%20width='4'%20height='4'%20fill='%23ffc46b'/%3E%3Crect%20x='3.5'%20y='8.5'%20width='4'%20height='4'%20fill='%23ffc46b'/%3E%3Crect%20x='8.5'%20y='8.5'%20width='4'%20height='4'%20fill='%237cc4ff'/%3E%3C/svg%3E"/>
 		</head>
 		<body>

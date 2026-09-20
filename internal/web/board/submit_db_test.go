@@ -423,7 +423,257 @@ func TestCreateSubmissionWritesEveryColumn(t *testing.T) {
 	case saved.Hidden:
 		t.Error("a new submission is hidden")
 	case saved.TmdbID != nil:
-		t.Errorf("tmdb_id = %v, want NULL: nothing on the form sets it yet", saved.TmdbID)
+		// A manual submission: nobody picked a film, so there is no id to
+		// store. Since nap-eie a draft CAN carry one — see
+		// TestCreateSubmissionWritesTheTMDBID — but a draft that does not must
+		// still write NULL, because a fabricated id here would make an
+		// unrelated film collide with it in movie_season_tmdb_unique_idx.
+		t.Errorf("tmdb_id = %v, want NULL for a submission with no film picked", saved.TmdbID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tmdb_id, and the constraint that has been waiting for it (nap-eie).
+// ---------------------------------------------------------------------------
+
+// TestCreateSubmissionWritesTheTMDBID: the column the schema has had since
+// migration 00004 and that nothing has ever written to.
+//
+// It is what makes "have we watched this before" answerable across years,
+// which was the original argument for the column, and it is what the
+// duplicate check below is keyed on.
+func TestCreateSubmissionWritesTheTMDBID(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 2)
+	s := newDBService(pool)
+
+	alice := f.person(t, "alice")
+	f.member(t, alice, nil)
+
+	d := draft{
+		title:       "Blade Runner",
+		year:        ptrOf(int32(1982)),
+		tmdbID:      ptrOf(int32(78)),
+		trailerURL:  ptrOf("https://www.youtube.com/watch?v=eogpIG53Cis"),
+		description: "In the smog-choked dystopian Los Angeles of 2019.",
+	}
+
+	movie, err := s.createSubmission(context.Background(), f.seasonID, alice, d)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	saved, err := store.New(pool).GetMovie(context.Background(), movie.ID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	switch {
+	case saved.TmdbID == nil:
+		t.Fatal("tmdb_id is NULL after a submission that carried one")
+	case *saved.TmdbID != 78:
+		t.Errorf("tmdb_id = %d, want 78", *saved.TmdbID)
+	// The three things a picked film is supposed to arrive with, and the
+	// reason the ticket exists: nobody typed any of them.
+	case saved.Year == nil || *saved.Year != 1982:
+		t.Errorf("year = %v, want 1982", saved.Year)
+	case saved.TrailerUrl == nil || *saved.TrailerUrl != *d.trailerURL:
+		t.Errorf("trailer_url = %v, want TMDB's", saved.TrailerUrl)
+	case saved.Description == "":
+		t.Error("description is empty; the synopsis did not make it to the row")
+	}
+}
+
+// TestSameFilmTwiceInOneSeasonIsRefused exercises
+// movie_season_tmdb_unique_idx, which has been in the schema since migration
+// 00004 and has NEVER FIRED — because tmdb_id was written as NULL on every row
+// and the index is partial on tmdb_id IS NOT NULL.
+//
+// Writing real ids switches it on. Two people picking the same film in one
+// season is an ordinary Tuesday, and two rows for one film would split the
+// ranked-choice vote between them, so the refusal is the feature. What this
+// test proves is that it arrives as errAlreadyUp and not as a 500: the
+// difference between "somebody already put that up, pick another" and an
+// error page is the whole of whether this is usable.
+func TestSameFilmTwiceInOneSeasonIsRefused(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 3)
+	s := newDBService(pool)
+
+	alice := f.person(t, "alice")
+	bob := f.person(t, "bob")
+	f.member(t, alice, nil)
+	f.member(t, bob, nil)
+
+	film := func() draft {
+		return draft{title: "Blade Runner", year: ptrOf(int32(1982)), tmdbID: ptrOf(int32(78))}
+	}
+
+	if _, err := s.createSubmission(context.Background(), f.seasonID, alice, film()); err != nil {
+		t.Fatalf("alice's submission: %v", err)
+	}
+
+	// Somebody else, same film.
+	_, err := s.createSubmission(context.Background(), f.seasonID, bob, film())
+	if !errors.Is(err, errAlreadyUp) {
+		t.Fatalf("bob's duplicate = %v, want errAlreadyUp", err)
+	}
+
+	// And the same person, same film: the quota is not what stopped it.
+	if _, err := s.createSubmission(context.Background(), f.seasonID, alice, film()); !errors.Is(err, errAlreadyUp) {
+		t.Errorf("alice's own duplicate = %v, want errAlreadyUp", err)
+	}
+}
+
+// The index is partial on NOT hidden, so withdrawing a film must hand the
+// title back to the season. Without that, one person withdrawing their pick
+// would permanently bar everybody from submitting that film for the year.
+func TestWithdrawingAFilmFreesItsTMDBID(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 3)
+	s := newDBService(pool)
+	q := store.New(pool)
+
+	alice := f.person(t, "alice")
+	bob := f.person(t, "bob")
+	f.member(t, alice, nil)
+	f.member(t, bob, nil)
+
+	film := func() draft {
+		return draft{title: "Blade Runner", year: ptrOf(int32(1982)), tmdbID: ptrOf(int32(78))}
+	}
+
+	first, err := s.createSubmission(context.Background(), f.seasonID, alice, film())
+	if err != nil {
+		t.Fatalf("alice's submission: %v", err)
+	}
+
+	if _, err := q.SetMovieHidden(context.Background(), store.SetMovieHiddenParams{
+		ID:     first.ID,
+		Hidden: true,
+	}); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+
+	if _, err := s.createSubmission(context.Background(), f.seasonID, bob, film()); err != nil {
+		t.Errorf("after a withdrawal the film is still blocked: %v", err)
+	}
+}
+
+// Two people submitting two DIFFERENT films must not collide, and a manual
+// submission must never collide with anything: NULL is not equal to NULL in a
+// unique index, so any number of films with no tmdb_id can be up at once.
+func TestTMDBIDUniquenessDoesNotOverreach(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 4)
+	s := newDBService(pool)
+
+	alice := f.person(t, "alice")
+	f.member(t, alice, nil)
+
+	drafts := []draft{
+		{title: "Blade Runner", tmdbID: ptrOf(int32(78))},
+		{title: "Blade Runner 2049", tmdbID: ptrOf(int32(335984))},
+		// Two manual submissions, both with no id at all.
+		{title: "Hausu"},
+		{title: "Begotten"},
+	}
+
+	for _, d := range drafts {
+		if _, err := s.createSubmission(context.Background(), f.seasonID, alice, d); err != nil {
+			t.Fatalf("submitting %q: %v", d.title, err)
+		}
+	}
+
+	if n := f.liveMovies(t, alice); n != len(drafts) {
+		t.Errorf("%d films on the board, want %d", n, len(drafts))
+	}
+}
+
+// The same film in two different seasons is not a duplicate — the index is on
+// (season_id, tmdb_id). This is the half of "have we watched this before" that
+// has to stay ALLOWED: the answer is "yes, in 2024", not a refusal.
+func TestTheSameFilmMayBeSubmittedInADifferentSeason(t *testing.T) {
+	pool := newTestPool(t)
+	s := newDBService(pool)
+
+	first := newFixture(t, pool, "submitting", 2)
+	second := newFixture(t, pool, "submitting", 2)
+
+	alice := first.person(t, "alice")
+	first.member(t, alice, nil)
+	second.member(t, alice, nil)
+
+	film := func() draft {
+		return draft{title: "Blade Runner", tmdbID: ptrOf(int32(78))}
+	}
+
+	if _, err := s.createSubmission(context.Background(), first.seasonID, alice, film()); err != nil {
+		t.Fatalf("first season: %v", err)
+	}
+	if _, err := s.createSubmission(context.Background(), second.seasonID, alice, film()); err != nil {
+		t.Errorf("the same film in a later season was refused: %v", err)
+	}
+}
+
+// The duplicate check is a caught constraint violation rather than a SELECT
+// before the INSERT, precisely so it holds when two submissions arrive at
+// once. This is that claim, tested the only way it can be.
+func TestDuplicateFilmHoldsUnderConcurrency(t *testing.T) {
+	pool := newTestPool(t)
+	f := newFixture(t, pool, "submitting", 5)
+	s := newDBService(pool)
+
+	const racers = 6
+
+	people := make([]uuid.UUID, racers)
+	for i := range people {
+		people[i] = f.person(t, fmt.Sprintf("racer%d", i))
+		f.member(t, people[i], nil)
+	}
+
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		wrote int
+		other []error
+	)
+
+	start := make(chan struct{})
+
+	for _, personID := range people {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_, err := s.createSubmission(context.Background(), f.seasonID, personID,
+				draft{title: "Blade Runner", tmdbID: ptrOf(int32(78))})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			switch {
+			case err == nil:
+				wrote++
+			case errors.Is(err, errAlreadyUp):
+			default:
+				other = append(other, err)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	if wrote != 1 {
+		t.Errorf("%d of %d concurrent submissions of one film were written, want exactly 1", wrote, racers)
+	}
+	// Every loser must get the refusal that says "pick another one", not a
+	// 500. A raw constraint error here is an error page for five of six.
+	if len(other) > 0 {
+		t.Errorf("%d racers got an unclassified error, want all losers to see errAlreadyUp: %v", len(other), other)
 	}
 }
 

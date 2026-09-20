@@ -49,6 +49,28 @@ type Config struct {
 	Origin            string
 	LogLevel          slog.Level
 
+	// TMDBAPIKey is a v3 API key for The Movie Database, which is what turns
+	// the submit form into a search (ticket nap-eie).
+	//
+	// It is deliberately OPTIONAL, unlike the six above. Blank is a supported
+	// configuration and not a degraded one: the submit form falls back to the
+	// four typed boxes it has always had, and says so. That is not a courtesy
+	// to a forgetful operator -- it is the state every agent's dev stack is
+	// in, and a required key here would mean nobody could start the server
+	// without one.
+	TMDBAPIKey string
+
+	// TMDBBaseURL overrides where the TMDB client points. Blank means the real
+	// API.
+	//
+	// It exists so that a dev stack or an end-to-end test can point at a local
+	// stub serving recorded payloads, which is the only way to exercise the
+	// search path without checking a key into somebody's shell history. It is
+	// validated like any other URL setting: a typo here is a server that
+	// cannot search, and finding that out at startup beats finding it out from
+	// somebody mid-submission.
+	TMDBBaseURL string
+
 	// TrustedProxyCount is how many reverse proxies stand between a client and
 	// this server. It decides whether X-Forwarded-For is believed at all; see
 	// internal/web/middleware.ClientIPPolicy for what each value means and why
@@ -127,6 +149,11 @@ func Load() (*Config, error) {
 		OAuthClientSecret: required("OAUTH_CLIENT_SECRET"),
 		CookieSecret:      required("COOKIE_SECRET"),
 		Origin:            required("ORIGIN"),
+
+		// Optional, so read directly rather than through required(): a blank
+		// one must not join the missing-variable list and stop the server.
+		TMDBAPIKey:  strings.TrimSpace(os.Getenv("TMDB_API_KEY")),
+		TMDBBaseURL: strings.TrimSpace(os.Getenv("TMDB_BASE_URL")),
 	}
 
 	if len(missing) > 0 {
@@ -173,6 +200,12 @@ func (c *Config) validate() error {
 	}
 	if len(c.CookieSecret) < minCookieSecretLen {
 		return fmt.Errorf("config: COOKIE_SECRET must be at least %d characters, got %d", minCookieSecretLen, len(c.CookieSecret))
+	}
+	// Only when it is set: blank means the real API, which is the normal case.
+	if c.TMDBBaseURL != "" {
+		if err := requireAbsoluteURL("TMDB_BASE_URL", c.TMDBBaseURL); err != nil {
+			return err
+		}
 	}
 	return nil
 }

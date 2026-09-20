@@ -253,6 +253,7 @@ func TestEveryPlaceholderInBaseCopyIsAKnownOne(t *testing.T) {
 		viewmodel.PlaceholderTitle:  true,
 		viewmodel.PlaceholderName:   true,
 		viewmodel.PlaceholderLimit:  true,
+		viewmodel.PlaceholderQuery:  true,
 	}
 
 	for key, s := range viewmodel.BaseCopy {

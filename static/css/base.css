@@ -1494,6 +1494,180 @@ textarea:user-invalid,
 
 
 /* ==========================================================================
+   8b. THE TMDB PICKER (nap-eie)
+   --------------------------------------------------------------------------
+   The search box and result list above the submit form. Everything here is
+   built out of tokens the packs already own, so a pack themes the picker
+   without knowing it exists.
+
+   Mobile first, like the rest of this file: the picker is used on a phone,
+   in a group chat, at eleven at night.
+   ========================================================================== */
+
+.search {
+  margin-block-end: var(--_sp-6);
+}
+
+/* The input and its button. The input takes the room and the button keeps
+   its own size, rather than a two-column grid: at 320px the button wraps
+   under a full-width input, which is what .cluster's flex-wrap already
+   does — no media query needed. */
+.search__row {
+  align-items: stretch;
+}
+
+.search__input {
+  flex: 1 1 14rem;
+  min-inline-size: 0;
+}
+
+/* A bare list: the rows are the visual objects, not the bullets. */
+.search__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-2);
+}
+
+/* One result. The WHOLE row is the link — see search.templ — so the
+   padding, the border and the hover all live on the anchor rather than on
+   the li, and the tap target is the row and not the words in it. */
+.search__pick {
+  display: flex;
+  gap: var(--_sp-3);
+  align-items: flex-start;
+  padding: var(--_sp-2);
+  background: var(--_surface);
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  color: inherit;
+  text-decoration: none;
+  min-block-size: var(--_tap);
+  transition: border-color var(--_speed) var(--_ease),
+              background-color var(--_speed) var(--_ease);
+}
+
+/* Deliberately no transform, for the same reason .card has none: a row that
+   moves under the pointer is motion, and the reduced-motion block can turn
+   off a transition but not a displacement. */
+.search__pick:hover,
+.search__pick:focus-visible {
+  border-color: var(--_accent);
+}
+
+/* The poster. The fixed box is what keeps the rows from reflowing as the
+   images arrive one by one over a phone connection — the <img> carries the
+   same numbers as width/height attributes so the space is reserved before
+   a single byte of image has loaded. */
+.search__poster {
+  flex: 0 0 auto;
+  inline-size: 92px;
+  block-size: 138px;
+  object-fit: cover;
+  border-radius: calc(var(--_radius) / 2);
+  background: var(--_bg);
+}
+
+/* The stand-in for a film TMDB has no poster for. It keeps the row's shape
+   rather than letting the text slide left, so a list of eight results reads
+   as one column and not as a ragged edge. */
+.search__poster--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--_sp-2);
+  font-size: var(--_fs-small, 0.875rem);
+  color: var(--_muted);
+  text-align: center;
+  border: 1px dashed var(--_border);
+}
+
+.search__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-1);
+  min-inline-size: 0;              /* let the text shrink instead of overflow */
+  padding-block: var(--_sp-1);
+}
+
+.search__title {
+  font-family: var(--_font-display);
+  font-weight: 600;
+  overflow-wrap: anywhere;         /* real films have absurd titles */
+}
+
+/* Three lines of synopsis. It is what tells two remakes apart, and more
+   than three lines turns a picker into a reading exercise. */
+.search__overview {
+  color: var(--_muted);
+  font-size: var(--_fs-small, 0.875rem);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.search__empty {
+  color: var(--_muted);
+}
+
+/* htmx sets aria-busy on the target while a request is in flight. Styling
+   the ARIA attribute rather than a class means the visual state and the
+   state announced to a screen reader cannot disagree — there is one flag,
+   and both read it.
+
+   Dimming rather than emptying: the previous results stay on screen and
+   faded while the next ones are fetched, so the list does not flash blank
+   between keystrokes. */
+.search__results[aria-busy="true"] {
+  opacity: 0.55;
+  transition: opacity var(--_speed) var(--_ease);
+}
+
+/* The chosen film, above the form. */
+.picked__row {
+  display: flex;
+  gap: var(--_sp-4);
+  align-items: flex-start;
+}
+
+.picked__poster {
+  flex: 0 0 auto;
+  inline-size: 92px;
+  block-size: 138px;
+  object-fit: cover;
+  border-radius: calc(var(--_radius) / 2);
+  background: var(--_bg);
+}
+
+.picked__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--_sp-3);
+  min-inline-size: 0;
+}
+
+.picked__title {
+  font-family: var(--_font-display);
+  font-size: var(--_fs-h3, 1.125rem);
+  overflow-wrap: anywhere;
+}
+
+/* A readonly field is not a disabled one and must not look like it: it is
+   showing a value the server is authoritative for, and it still reads to a
+   screen reader and still posts. The cursor is the honest signal. */
+.panel input[readonly] {
+  background: var(--_surface);
+  color: var(--_muted);
+  cursor: default;
+}
+
+
+/* ==========================================================================
    9. UTILITIES
    ========================================================================== */
 

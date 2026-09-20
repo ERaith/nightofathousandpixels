@@ -202,6 +202,27 @@ type SubmitForm struct {
 	TrailerURL  string
 	Description string
 
+	// TMDBID is the chosen film's TMDB id, as a string, or "" for a manual
+	// submission. It rides through the form in a hidden field.
+	//
+	// It is a string for a different reason from the others: not so that bad
+	// input can be redisplayed, but because it is never redisplayed at all —
+	// it is an identifier, not something anyone typed. An id the server cannot
+	// parse or cannot find at TMDB is dropped and the submission becomes a
+	// manual one, which is the only sensible recovery: there is no box to put
+	// a message beside.
+	TMDBID string
+
 	// Errors is empty on a first render and on a successful one.
 	Errors FieldErrors
+}
+
+// FromTMDB reports whether this form was filled in by picking a search result.
+//
+// It decides how the form renders, not what the server trusts. Title, Year and
+// TrailerURL on a TMDB submission are shown read-only, because the server is
+// going to overwrite them from TMDB anyway and a box you can type in that
+// silently discards what you type is worse than no box.
+func (f SubmitForm) FromTMDB() bool {
+	return f.TMDBID != ""
 }

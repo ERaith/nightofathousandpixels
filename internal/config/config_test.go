@@ -23,6 +23,63 @@ func setRequired(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("TRUSTED_PROXY_COUNT", "")
 	t.Setenv("BOOTSTRAP_ADMIN_EMAILS", "")
+	// Not required, but cleared so that a key in the developer's own
+	// environment cannot make TestTMDBIsOptional pass for the wrong reason.
+	t.Setenv("TMDB_API_KEY", "")
+	t.Setenv("TMDB_BASE_URL", "")
+}
+
+// TestTMDBIsOptional: the submit page's search is configuration the server
+// starts without.
+//
+// This is not leniency. Every agent's dev stack and every fresh clone is in
+// this state, and a required key here would mean nobody could run the server
+// without one -- so the submit form falls back to the four typed boxes it has
+// always had. See internal/web/board.Options.TMDB.
+func TestTMDBIsOptional(t *testing.T) {
+	setRequired(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load refused to start with no TMDB key: %v", err)
+	}
+	if cfg.TMDBAPIKey != "" || cfg.TMDBBaseURL != "" {
+		t.Errorf("TMDB settings = %q / %q, want both empty", cfg.TMDBAPIKey, cfg.TMDBBaseURL)
+	}
+}
+
+func TestTMDBSettingsAreRead(t *testing.T) {
+	setRequired(t)
+	t.Setenv("TMDB_API_KEY", "  a-key  ")
+	t.Setenv("TMDB_BASE_URL", "  http://localhost:9330  ")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Trimmed, because a key with a trailing newline from a copy-paste is a
+	// 401 from TMDB and an afternoon of confusion.
+	if cfg.TMDBAPIKey != "a-key" {
+		t.Errorf("TMDBAPIKey = %q, want it trimmed", cfg.TMDBAPIKey)
+	}
+	if cfg.TMDBBaseURL != "http://localhost:9330" {
+		t.Errorf("TMDBBaseURL = %q, want it trimmed", cfg.TMDBBaseURL)
+	}
+}
+
+// A typo in TMDB_BASE_URL is a server that cannot search. Finding that out at
+// startup beats finding it out from somebody mid-submission.
+func TestTMDBBaseURLMustBeAbsolute(t *testing.T) {
+	for _, raw := range []string{"localhost:9330", "/api", "ftp://example.com", "http://"} {
+		t.Run(raw, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv("TMDB_BASE_URL", raw)
+
+			if _, err := config.Load(); err == nil {
+				t.Errorf("Load accepted TMDB_BASE_URL=%q", raw)
+			}
+		})
+	}
 }
 
 func TestLoadLogLevel(t *testing.T) {
