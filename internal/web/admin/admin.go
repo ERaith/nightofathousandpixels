@@ -133,11 +133,18 @@ type Options struct {
 
 	Logger *slog.Logger
 
-	// Origin, Theme and Nav are passed through to every page, so the admin
-	// screens look like the rest of the site rather than like a tool.
+	// Origin, Theme and the two navs are passed through to every page, so the
+	// admin screens look like the rest of the site rather than like a tool.
 	Origin string
 	Theme  templates.Theme
-	Nav    []templates.NavItem
+
+	// Nav is the header as a reader who is not a member of the open season
+	// sees it; MemberNav is the whole header a member sees, not the extra
+	// items (ticket nap-dbu). Nil MemberNav means members see Nav like
+	// everybody else. See viewmodel.NavFor for why these are two complete
+	// lists rather than a base plus extras.
+	Nav       []templates.NavItem
+	MemberNav []templates.NavItem
 
 	// Location is the timezone every date on these screens is read AND written
 	// in. It is the one setting on this package that can silently ruin a
@@ -213,9 +220,20 @@ type admin struct {
 	hasSeason bool
 
 	// viaBootstrap records that this person is here on BOOTSTRAP_ADMIN_EMAILS
-	// rather than on a membership row. The list page says so; nothing else
-	// behaves differently, because the privilege is the same either way.
+	// rather than on a membership row. The list page says so, and the header
+	// reads isMember below; the PRIVILEGE is the same either way.
 	viaBootstrap bool
+
+	// isMember is whether there is a season_member row for this person in the
+	// open season. It is not the same question as "may they be here", which is
+	// what the gate answered, and the header needs this one (nap-5qd).
+	//
+	// It is tracked rather than inferred from viaBootstrap, because the two
+	// are not opposites: a bootstrap admin may also be an ordinary member of
+	// the open season, and a bootstrap admin on a brand new deployment is a
+	// member of nothing at all. Deriving it would get the second case wrong
+	// and offer Submit to somebody with no season to submit to.
+	isMember bool
 }
 
 // adminKey is the context key. Unexported so no other package can forge one.
@@ -323,6 +341,7 @@ func (s *Service) requireAdmin(next http.Handler) http.Handler {
 			})
 			switch {
 			case err == nil:
+				a.isMember = true
 				seasonAdmin = member.IsAdmin
 			case errors.Is(err, pgx.ErrNoRows):
 				// Signed in, not on this year's list. Unremarkable.
@@ -392,6 +411,13 @@ func (s *Service) page(r *http.Request, title string, a *admin) viewmodel.Layout
 	}
 	p.SignInHref = ""
 	p.SignOutHref = signin.LogoutPath
+	// The header a member sees, when this admin is one (nap-5qd). An admin is
+	// USUALLY a member -- that is what the per-season rule means -- but not
+	// always: a bootstrap admin opening the first season is a member of
+	// nothing yet, and offering them Submit would be a link to a page that
+	// refuses them. isMember is the honest answer to the question the header
+	// is actually asking.
+	p.Nav = viewmodel.NavFor(s.opts.Nav, s.opts.MemberNav, a.isMember)
 
 	return p
 }

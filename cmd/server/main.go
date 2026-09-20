@@ -330,6 +330,7 @@ func newRouter(
 		Logger:           logger,
 		Origin:           cfg.Origin,
 		Nav:              nav,
+		MemberNav:        memberNav,
 		Theme:            packs.Theme(pack),
 	}).Routes(r)
 	if len(cfg.BootstrapAdminEmails) > 0 {

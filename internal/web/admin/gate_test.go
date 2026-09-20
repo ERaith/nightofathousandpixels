@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ERaith/nightofathousandpixels/internal/auth"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
+	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
 
 // The admin gate, which is the one piece of this package that has to be right
@@ -397,4 +399,173 @@ func TestEveryAdminRouteIsBehindTheGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The header on an admin screen (nap-5qd).
+//
+// This defect survived build, vet, the unit suite and 58 integration tests,
+// and was found only by loading the page: builder-11's nap-dbu replaced the
+// one-nav-for-everybody header with two complete lists picked by
+// viewmodel.NavFor, and this package went on passing a single list. Every
+// gate was green because the two branches touched different files.
+//
+// So these assert on the nav that reaches the page, which is the thing that
+// was wrong, rather than on anything about how it was chosen.
+
+var (
+	testPublicNav = []viewmodel.NavItem{
+		{Label: "Home", Href: "/"},
+		{Label: "The slate", Href: "/slate"},
+	}
+	testMemberNav = []viewmodel.NavItem{
+		{Label: "Home", Href: "/"},
+		{Label: "The slate", Href: "/slate"},
+		{Label: "Submit", Href: "/submit"},
+	}
+)
+
+// navFor runs one request through the gate and returns the header the page
+// would render.
+func navFor(t *testing.T, g *gateStore, bootstrap func(string) bool, p store.Person) []viewmodel.NavItem {
+	t.Helper()
+
+	s, sessions := gateService(t, g, bootstrap)
+	s.opts.Nav = testPublicNav
+	s.opts.MemberNav = testMemberNav
+
+	var nav []viewmodel.NavItem
+	handler := s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a := mustAdmin(r.Context())
+		nav = s.page(r, "Seasons", &a).Nav
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), signedIn(t, sessions, p))
+
+	return nav
+}
+
+func hasSubmit(nav []viewmodel.NavItem) bool {
+	for _, item := range nav {
+		if item.Href == "/submit" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestAnAdminSeesTheMemberHeader is the defect itself: Submit vanished from
+// the header the moment an admin opened an admin screen, and came back when
+// they left it.
+func TestAnAdminSeesTheMemberHeader(t *testing.T) {
+	ada := person("ada@example.test")
+	season := store.Season{ID: uuid.New(), Year: 2026, State: "submitting"}
+	g := &gateStore{
+		people:  map[uuid.UUID]store.Person{ada.ID: ada},
+		season:  season,
+		members: map[uuid.UUID]store.SeasonMember{ada.ID: {SeasonID: season.ID, PersonID: ada.ID, IsAdmin: true}},
+	}
+
+	if nav := navFor(t, g, nil, ada); !hasSubmit(nav) {
+		t.Errorf("an admin got the signed-out header on an admin screen: %v", nav)
+	}
+}
+
+// TestABootstrapAdminWithNoSeasonSeesThePublicHeader is why isMember is
+// tracked rather than derived from "we let them in".
+//
+// An admin is usually a member, but the bootstrap path is exactly the case
+// where they are not: on a brand new deployment there is no season to be a
+// member of. Offering Submit there is a link to a page that refuses them, and
+// the first thing they would learn is that the header lies.
+func TestABootstrapAdminWithNoSeasonSeesThePublicHeader(t *testing.T) {
+	ada := person("ada@example.test")
+	g := &gateStore{
+		people:   map[uuid.UUID]store.Person{ada.ID: ada},
+		noSeason: true,
+	}
+
+	if nav := navFor(t, g, func(string) bool { return true }, ada); hasSubmit(nav) {
+		t.Errorf("a bootstrap admin with no season was offered Submit: %v", nav)
+	}
+}
+
+// And a bootstrap admin who IS a member of the open season gets the member
+// header, because the two facts are independent.
+func TestABootstrapAdminWhoIsAlsoAMemberSeesTheMemberHeader(t *testing.T) {
+	ada := person("ada@example.test")
+	season := store.Season{ID: uuid.New(), Year: 2026, State: "submitting"}
+	g := &gateStore{
+		people:  map[uuid.UUID]store.Person{ada.ID: ada},
+		season:  season,
+		members: map[uuid.UUID]store.SeasonMember{ada.ID: {SeasonID: season.ID, PersonID: ada.ID, IsAdmin: false}},
+	}
+
+	if nav := navFor(t, g, func(string) bool { return true }, ada); !hasSubmit(nav) {
+		t.Errorf("a bootstrap admin who is a member of the open season got the public header: %v", nav)
+	}
+}
+
+// TestTheRefusalPageTellsTheTruthAboutMembership.
+//
+// The first version of this test asserted that the admin 404 never renders
+// the member header, on the theory that it would leak whether somebody is on
+// the list. That was wrong, and it failed: an ordinary member who wanders
+// onto an admin URL IS a member, sees the member header on every other page
+// of the site, and hiding it here would be the anomaly rather than the
+// safeguard.
+//
+// What actually matters is the two directions separately, so that is what
+// this checks: a member keeps their header, and somebody who is not a member
+// never gets one that says they are.
+func TestTheRefusalPageTellsTheTruthAboutMembership(t *testing.T) {
+	season := store.Season{ID: uuid.New(), Year: 2026, State: "submitting"}
+
+	t.Run("a member keeps the member header", func(t *testing.T) {
+		bob := person("bob@example.test")
+		g := &gateStore{
+			people:  map[uuid.UUID]store.Person{bob.ID: bob},
+			season:  season,
+			members: map[uuid.UUID]store.SeasonMember{bob.ID: {SeasonID: season.ID, PersonID: bob.ID, IsAdmin: false}},
+		}
+
+		body, code := refusalFor(t, g, bob)
+		if code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", code)
+		}
+		if !strings.Contains(body, "/submit") {
+			t.Error("a member's 404 dropped Submit from the header; it is on every other page they load")
+		}
+	})
+
+	t.Run("a non-member is not told they are one", func(t *testing.T) {
+		stranger := person("stranger@example.test")
+		g := &gateStore{
+			people: map[uuid.UUID]store.Person{stranger.ID: stranger},
+			season: season,
+		}
+
+		body, code := refusalFor(t, g, stranger)
+		if code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", code)
+		}
+		if strings.Contains(body, "/submit") {
+			t.Error("somebody who is not on the list was offered Submit")
+		}
+	})
+}
+
+// refusalFor drives one refused request and returns what was written.
+func refusalFor(t *testing.T, g *gateStore, p store.Person) (string, int) {
+	t.Helper()
+
+	s, sessions := gateService(t, g, nil)
+	s.opts.Nav = testPublicNav
+	s.opts.MemberNav = testMemberNav
+
+	rec := httptest.NewRecorder()
+	s.requireAdmin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("a non-admin reached an admin screen")
+	})).ServeHTTP(rec, signedIn(t, sessions, p))
+
+	return rec.Body.String(), rec.Code
 }
