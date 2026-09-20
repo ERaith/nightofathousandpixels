@@ -595,19 +595,22 @@ hr {
   background: var(--_surface);
 }
 
+/* One wrapping row, not a column. The three children are the wordmark, the
+   nav and the account control, and .nav's `flex: 1 0 100%` is what does the
+   work: below 40em it forces a line break AFTER the wordmark and the account
+   have shared the first line, so a phone gets a two-line header instead of
+   the three-line one a plain column produced. From 40em the nav joins them.
+
+   Header order in the DOM is wordmark, nav, account -- reading order and tab
+   order both -- and the account is pushed to the far edge with an auto margin
+   rather than by being reordered, so what a screen reader hears and what a
+   keyboard visits match what is on screen. */
 .site-header__inner {
   display: flex;
-  flex-direction: column;
-  gap: var(--_sp-3);
-  padding-block: var(--_sp-4);
-}
-
-.site-header__brand {
-  display: flex;
-  align-items: center;
-  gap: var(--_sp-3);
   flex-wrap: wrap;
-  min-block-size: var(--_tap);
+  align-items: center;
+  gap: var(--_sp-2) var(--_sp-3);
+  padding-block: var(--_sp-3);
 }
 
 .wordmark {
@@ -620,19 +623,36 @@ hr {
   display: inline-flex;
   align-items: center;
   min-block-size: var(--_tap);
+
+  /* A line of its own below 40em. At 320px there is not room for a title, a
+     nav and an account control on one row, and three stacked rows is a
+     quarter of a phone screen spent on chrome -- so the title takes the
+     first row and the nav and the account share the second. */
+  flex: 1 0 100%;
+  min-inline-size: 0;
 }
 
 .nav {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--_sp-1) var(--_sp-4);
+  gap: var(--_sp-1) var(--_sp-3);
+
+  /* Deliberately 0 grow. The account control is pushed to the end edge by its
+     own auto margin, so a nav that grew would only stretch its own hit areas
+     apart for no reason -- and, below 40em where it shares the row, the extra
+     width is exactly what would bump the account onto a third line. */
+  flex: 0 1 auto;
 }
 
 .nav a {
   display: inline-flex;
   align-items: center;
-  padding-inline: var(--_sp-2);
+  /* The nav shares a row with the account control below 40em, and 288px of
+     content is the whole budget. The 44px tap floor is on the block axis and
+     is untouched; what gives here is horizontal padding, which is spacing
+     rather than target size -- the gap between links keeps them apart. */
+  padding-inline: var(--_sp-1);
   border-radius: var(--_radius);
   text-decoration: none;
   color: var(--_text);
@@ -647,6 +667,72 @@ hr {
   font-weight: 600;
   text-decoration: underline;
   text-decoration-thickness: 2px;
+}
+
+/* -- The account control ---------------------------------------------------
+   Who you are and how you leave, or the way in. See AccountControl in
+   header.templ: the template renders one of the two or neither, so nothing
+   here has to cope with both being present at once. */
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--_sp-1);
+  flex: 0 0 auto;
+  margin-inline-start: auto;   /* hard against the end edge on every line */
+}
+
+/* Not a tap target -- it is a decorative disc with the same letter the name
+   beside it starts with -- so it is deliberately smaller than 44px and is
+   aria-hidden in the template. */
+.account__avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 999px;
+  background: var(--_accent);
+  color: var(--_on-accent);
+  font-family: var(--_font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* A header is chrome, and a header that wraps onto a fourth line because
+   somebody signed in with a long address is worse than an ellipsis. The full
+   value stays in the DOM either way, preceded by a visually-hidden
+   "Signed in as", so nothing is lost to a screen reader. 18ch clears every
+   ordinary display name; it is an email address that truncates. */
+.account__name {
+  min-inline-size: 0;
+  max-inline-size: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.account__out {
+  flex: 0 0 auto;
+}
+
+/* Below 30em there is no room to print the name next to a wordmark and a
+   44px button, so it is clipped rather than display:none-d. The difference
+   matters: display:none would take "Signed in as Bob Voter" out of the
+   accessibility tree as well, and the disc that replaces it is aria-hidden,
+   which would leave a phone screen reader with no way to find out who is
+   signed in at all. */
+@media (max-width: 29.999em) {
+  .account__name {
+    clip-path: inset(50%);
+    block-size: 1px;
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
 }
 
 .site-main {
@@ -685,10 +771,24 @@ hr {
   }
 
   .site-header__inner {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--_sp-5);
+    padding-block: var(--_sp-4);
+    gap: var(--_sp-3) var(--_sp-5);
+  }
+
+  /* Back to its natural width so the nav follows it rather than starting a
+     row of its own. */
+  .wordmark {
+    flex: 0 1 auto;
+  }
+
+  /* Room for all three on one line, so the nav gets its ordinary spacing
+     back. */
+  .nav {
+    gap: var(--_sp-1) var(--_sp-4);
+  }
+
+  .nav a {
+    padding-inline: var(--_sp-2);
   }
 }
 
@@ -698,16 +798,33 @@ hr {
    ========================================================================== */
 
 /* -- The movie slate -------------------------------------------------------
+   A BOARD, not a list. This is the single biggest thing the 2025 site did
+   that this one did not (nap-luo): it ran the slate as
+   `grid gap-8 md:grid-cols-2 lg:grid-cols-3`, and a column of full-width
+   cards reads as a list however nicely the cards are drawn.
+
+   auto-fill rather than a fixed column count, because the count that suits
+   a 72rem shell is not the count that suits a tablet and neither is the one
+   that suits 320px; an 18rem track gives one column on a phone, two around
+   40rem and three at the full width, which is 2025's 1/2/3 without any of
+   the breakpoints being written down.
+
    min() is what keeps 320px honest: the track can never demand more than
    the container has, so the grid collapses to one column instead of
    overflowing. */
 .card-grid {
   display: grid;
   gap: var(--_sp-4);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+@media (min-width: 40em) {
+  .card-grid {
+    gap: var(--_sp-5);
+  }
 }
 
 .card {
@@ -720,14 +837,38 @@ hr {
   border-radius: var(--_radius);
   box-shadow: var(--_shadow);
   min-inline-size: 0;              /* let flex/grid children shrink */
+  transition: border-color var(--_speed) var(--_ease),
+              box-shadow var(--_speed) var(--_ease);
 }
 
+/* The card lifts and the accent picks up, which is 2025's
+   `hover:shadow-xl hover:border-accent/40`. Deliberately NO transform: a
+   card that moves 2px under the pointer is motion, and the reduced-motion
+   block can only turn off the transition, not the displacement. A shadow
+   and a border colour degrade to "arrives instantly" instead, which is the
+   right answer for somebody who asked for less movement.
+
+   It is a pointer affordance only. Nothing here is the sole signal for
+   anything -- the card is not a link, and every control inside it keeps its
+   own focus ring. */
+@media (hover: hover) {
+  .card:hover {
+    border-color: color-mix(in srgb, var(--_accent) 55%, var(--_border));
+    box-shadow: 0 2px 6px rgb(0 0 0 / 0.35), 0 16px 40px rgb(0 0 0 / 0.30);
+  }
+}
+
+/* A FIXED 16:9 box on every card, with or without anything to put in it.
+   This is what stops a film with no trailer from rendering as half a card
+   next to a full one, and it is reserved rather than measured, so nothing
+   moves when a lazy iframe finally loads. */
 .card__media {
   aspect-ratio: 16 / 9;
   inline-size: 100%;
   overflow: hidden;
   border-radius: calc(var(--_radius) - 2px);
   background: var(--_bg);
+  border: 1px solid color-mix(in srgb, var(--_border) 55%, transparent);
 }
 
 .card__media > * {
@@ -735,6 +876,21 @@ hr {
   block-size: 100%;
   object-fit: cover;
   border: 0;
+}
+
+/* What goes in the box when there is no player: the trailer link, or the
+   note that there isn't one. Centred, and filling the box, so the whole
+   16:9 panel is the affordance rather than a button floating in a void. */
+.card__media-fill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--_sp-3);
+  text-align: center;
+}
+
+.card__media-note {
+  color: var(--_muted);
 }
 
 .card__title {
@@ -753,6 +909,51 @@ hr {
 
 .card__body {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The description as a pull quote: 2025's `italic border-l-2 pl-3`. It is
+   the one piece of writing on the card that a person composed, and the rule
+   down its edge is what makes it read as somebody talking rather than as a
+   column out of a database.
+
+   NOT set smaller. 2025 used text-sm here; @layer nap-enforce floors body
+   text at 16px and a pack cannot lower it, so neither does this. */
+.card__quote {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-style: italic;
+  padding-inline-start: var(--_sp-3);
+  padding-block: var(--_sp-1);
+  border-inline-start: 2px solid color-mix(in srgb, var(--_accent) 45%, transparent);
+}
+
+/* The footer row: 2025's `mt-4 flex items-center justify-between`. The rule
+   above it separates the card's chrome from its content, and the right-hand
+   side is empty today -- it is where the vote control goes when nap-h3l
+   lands.
+
+   Deliberately NOT pinned to the bottom with `margin-block-start: auto`.
+   Tried that first, on the reasoning that credits lining up across a row
+   would look tidier; what it actually does is push the rule away from the
+   thing it belongs to and leave a hole between the media box and the
+   footer, which reads as a card that is missing something. Cards in a grid
+   row stretch to match whatever the tallest one needs, so the slack has to
+   go somewhere -- below the footer, where it looks like padding, rather
+   than above it, where it looks like a gap. */
+.card__footer {
+  padding-block-start: var(--_sp-3);
+  border-block-start: 1px solid color-mix(in srgb, var(--_border) 55%, transparent);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--_sp-2) var(--_sp-3);
+}
+
+.card__by {
+  color: var(--_muted);
+  min-inline-size: 0;
   overflow-wrap: anywhere;
 }
 
@@ -837,12 +1038,173 @@ hr {
 .notice--warn   { border-inline-start-color: var(--_warn); }
 .notice--error  { border-inline-start-color: var(--_danger); }
 
+/* -- The empty board ------------------------------------------------------
+   The morning of 1 October, and the state more people will see than any
+   other: the link lands in the group chat, thirty people open it at once,
+   and there is nothing on the board yet.
+
+   It was a centred paragraph in a dashed box, which is what a page that
+   failed to load looks like. It is now a panel that says the thing and
+   offers the button, with three empty cards under it in the real grid so
+   that the visitor can see what they are being asked to start. */
 .empty {
   padding: var(--_sp-6) var(--_sp-4);
-  text-align: center;
   color: var(--_muted);
-  border: 1px dashed var(--_border);
+  border: 1px solid var(--_border);
+  border-radius: calc(var(--_radius) + 4px);
+  background: var(--_surface);
+  box-shadow: var(--_shadow);
+  display: flex;
+  flex-direction: column;
+  gap: var(--_sp-6);
+}
+
+/* The words and the button. Centred, capped at the readable measure, and
+   the heading is allowed to be big -- this is the one moment on the site
+   with a single thing to do, so it gets the room to say it. */
+.empty__say {
+  inline-size: 100%;
+  max-inline-size: var(--_measure);
+  margin-inline: auto;
+  text-align: center;
+  color: var(--_text);
+}
+
+.empty__say > h2 {
+  font-size: var(--_fs-h1);
+}
+
+.empty__say > p {
+  color: var(--_muted);
+  margin-block-end: var(--_sp-5);
+}
+
+/* The three outlines. Same grid as the real board and the same card
+   proportions, so the shape a visitor sees here is the shape they get.
+   It is aria-hidden in the template and holds no text.
+
+   No animation on purpose: a pulsing skeleton promises that something is
+   loading, and nothing is loading. Nothing arrives here until somebody
+   presses the button above it. */
+.slate-preview {
+  display: grid;
+  gap: var(--_sp-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+}
+
+.card--ghost {
+  background: transparent;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--_border) 70%, transparent);
+  box-shadow: none;
+  gap: var(--_sp-3);
+}
+
+.card--ghost .card__media {
+  background: color-mix(in srgb, var(--_border) 18%, transparent);
+  border-style: dashed;
+}
+
+.ghost {
+  display: block;
+  block-size: 0.75rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--_border) 45%, transparent);
+}
+
+.ghost--title  { block-size: 1.1rem; inline-size: 70%; }
+.ghost--line   { inline-size: 90%; }
+.ghost--credit { inline-size: 45%; margin-block-start: auto; }
+
+/* Only the first outline on a phone. Three stacked empty cards under a
+   button is a lot of scrolling to say one thing, and one is enough to show
+   the shape. */
+@media (max-width: 47.999em) {
+  .slate-preview > :nth-child(n + 2) {
+    display: none;
+  }
+}
+
+/* -- The season strip -----------------------------------------------------
+   When this shuts, and whether you have a pick left. Two facts, one row.
+   They were two separate blocks a scroll apart before nap-luo, the second
+   of them wrapped in a notice box that said the same thing the strip now
+   says in half the space. */
+.season-strip {
+  display: grid;
+  gap: var(--_sp-4);
+  padding: var(--_sp-4) var(--_sp-5);
+  border: 1px solid var(--_border);
+  border-inline-start: 4px solid var(--_accent);
   border-radius: var(--_radius);
+  background: var(--_surface);
+}
+
+.season-strip__label {
+  color: var(--_muted);
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.season-strip__value {
+  font-family: var(--_font-display);
+  font-size: var(--_fs-lead);
+  line-height: 1.25;
+  color: var(--_text);
+}
+
+@media (min-width: 40em) {
+  /* The date is the bigger of the two and gets the bigger share; the
+     allowance sits against the end edge with a rule between them. minmax(0,
+     ...) rather than a bare fraction so a long date wraps inside its cell
+     instead of widening it. */
+  .season-strip {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--_sp-5);
+    align-items: center;
+  }
+
+  .season-strip__cell--aside {
+    padding-inline-start: var(--_sp-5);
+    border-inline-start: 1px solid color-mix(in srgb, var(--_border) 55%, transparent);
+  }
+}
+
+/* The cell only takes the second column when there IS a first one. A
+   signed-out visitor has no allowance and a season with no dates set has no
+   deadline, and either alone should fill the strip rather than sitting in
+   half of it with a rule down the middle of nothing. */
+.season-strip__cell--aside:only-child {
+  padding-inline-start: 0;
+  border-inline-start: 0;
+}
+
+/* -- Panel ----------------------------------------------------------------
+   One surface with an edge round it, for a group of controls that is one
+   thing to do rather than several. The submit form is the case it exists
+   for: four fields and a button that should read as a single moment.
+
+   Inputs inside a panel drop back to the page background, because a
+   surface-coloured control on a surface-coloured panel has nothing but its
+   border to distinguish it. The pack's own text:bg contrast guarantee
+   carries the swap. */
+.panel {
+  padding: var(--_sp-5);
+  background: var(--_surface);
+  border: 1px solid var(--_border);
+  border-radius: calc(var(--_radius) + 4px);
+  box-shadow: var(--_shadow);
+}
+
+.panel input:not([type="checkbox"]):not([type="radio"]),
+.panel select,
+.panel textarea {
+  background: var(--_bg);
+}
+
+.panel > .badge {
+  margin-block-end: var(--_sp-5);
 }
 
 .countdown {
@@ -1074,6 +1436,26 @@ textarea:user-invalid,
   border-color: var(--_accent);
 }
 
+/* Low emphasis, for chrome rather than content: the header's sign-out and
+   sign-in. It is a full button underneath -- same 44px floor, same focus
+   ring, same border contrast -- and only the fill is dropped, so that the
+   thing a visitor came to the page to do stays the loudest thing on it. */
+.btn--quiet {
+  background: transparent;
+  color: var(--_text);
+
+  /* Narrower than a content button on purpose: this one shares a 288px row
+     with the nav at 320px, and the horizontal padding is the only part of it
+     that is spacing rather than target size. The 44px floor is on the block
+     axis and on min-inline-size, and both are untouched. */
+  padding-inline: var(--_sp-3);
+}
+
+.btn--quiet:hover {
+  color: var(--_accent);
+  border-color: var(--_accent);
+}
+
 .btn--danger {
   background: transparent;
   color: var(--_danger);
@@ -1195,8 +1577,38 @@ textarea:user-invalid,
   input,
   select,
   textarea,
-  .table-scroll {
+  .table-scroll,
+  /* nap-luo's components. Every one of them draws its own edge with
+     color-mix() against a pack token, and a forced palette throws all of
+     those away -- which would leave the media box, the season strip and the
+     submit panel as invisible rectangles. */
+  .panel,
+  .season-strip,
+  .empty,
+  .card__media {
     border: 1px solid ButtonBorder;
+  }
+
+  /* The rules that carry meaning rather than shape: the accent down the side
+     of a pull quote, the divider in the season strip, the line above a
+     card's credit. CanvasText rather than ButtonBorder because these are
+     separators between pieces of text, not the outline of a control. */
+  .card__quote {
+    border-inline-start: 2px solid CanvasText;
+  }
+
+  .card__footer {
+    border-block-start: 1px solid CanvasText;
+  }
+
+  .season-strip {
+    border-inline-start: 4px solid Highlight;
+  }
+
+  /* The outlines on an empty board are decoration with no text in them, and
+     a forced palette would paint them as solid as the real thing. */
+  .slate-preview {
+    display: none;
   }
 
   .btn--primary,

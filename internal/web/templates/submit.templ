@@ -62,12 +62,20 @@ templ SubmitPage(p Submit) {
 // here depends on JavaScript being present.
 templ SubmitFormSection(p Submit) {
 	{{ fields := newSubmitFields(p.Layout.Theme, p.Form) }}
-	<div class="measure">
-		if label := p.Layout.QuotaLabel(p.Quota); label != "" {
-			<p class="meta">{ label }</p>
-		}
+	<div class="measure stack">
+		// The summary is an alert about the form and sits OUTSIDE it, above,
+		// where it reads first. The form itself is one panel rather than a
+		// run of controls down the page: nap-luo's "a single confident moment
+		// rather than a form" is mostly this, a surface with an edge round it
+		// so that four fields and a button read as one object you are filling
+		// in and not as four things you have to get through.
 		@SubmitErrorSummary(p.Layout.Theme, fields)
-		<form method="post" action={ p.Action }>
+		<form class="panel" method="post" action={ p.Action }>
+			// Your allowance, at the top of the thing it constrains. It was a
+			// line of grey body text before, which is where the eye goes last.
+			if label := p.Quota.Label(); label != "" {
+				<p class="badge badge--accent">{ label }</p>
+			}
 			@formRow(fields.Title) {
 				<input
 					type="text"

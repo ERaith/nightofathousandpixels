@@ -230,10 +230,17 @@ func newRouter(
 	// into an OAuth flow they did not ask for is worse than no link, and the
 	// slate already offers "Put a movie up" to the people who can use it and
 	// "Sign in to add yours" to the people who cannot.
+	//
+	// Sign in used to be a fourth entry here, and that was nap-1j5: a nav item
+	// is a constant, so the header offered it to people who were already
+	// signed in, on every page, and never once said whose session it was. It
+	// is now the header's account control instead, which is built per request
+	// from LayoutData.CurrentUser / SignInHref / SignOutHref. Every service
+	// that renders a page therefore has to be given the sign-in path
+	// separately -- hence SignInHref below on all three.
 	nav := []templates.NavItem{
 		{Label: "Home", Href: "/"},
 		{Label: "The slate", Href: board.SlatePath},
-		{Label: "Sign in", Href: authenticator.LoginPath()},
 	}
 
 	queries := store.New(pool)
@@ -262,13 +269,14 @@ func newRouter(
 	// somebody sees while they are still proving who they are are not where
 	// that judgement is made.
 	accounts := signin.New(signin.Options{
-		Auth:     authenticator,
-		Sessions: sessions,
-		Store:    queries,
-		Logger:   logger,
-		Origin:   cfg.Origin,
-		Nav:      nav,
-		Theme:    packs.Theme(pack),
+		Auth:       authenticator,
+		Sessions:   sessions,
+		Store:      queries,
+		Logger:     logger,
+		Origin:     cfg.Origin,
+		Nav:        nav,
+		SignInHref: authenticator.LoginPath(),
+		Theme:      packs.Theme(pack),
 	})
 	accounts.Routes(r)
 
@@ -288,14 +296,13 @@ func newRouter(
 		Theme:         packs.Theme(pack),
 	}).Routes(r)
 
-	// The HTML pages, /static/ and /theme/. Origin is only used to build
-	// absolute URLs for link previews.
+	// The HTML pages and /static/. Origin is only used to build absolute URLs
+	// for link previews; nothing here reads the database.
 	web.New(web.Options{
-		Origin:       cfg.Origin,
-		Nav:          nav,
-		Themes:       packs,
-		Pack:         pack,
-		ThemePreview: adminThemePreview(sessions, queries, logger),
+		Origin:     cfg.Origin,
+		Nav:        nav,
+		SignInHref: authenticator.LoginPath(),
+		Theme:      packs.Theme(pack),
 	}).Routes(r)
 
 	return r

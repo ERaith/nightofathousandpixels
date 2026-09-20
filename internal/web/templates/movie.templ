@@ -8,11 +8,32 @@ import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 // the submit page, because they are the same thing seen from two places. Two
 // near-identical cards is how one of them quietly stops showing the trailer.
 //
+// THE SHAPE IS THE 2025 CARD, ported (nap-luo). That site's board read as a
+// board and this one read as a list, and the difference was not colour:
+//
+//	title            the thing you are scanning for, so it goes first
+//	badges           winner / withdrawn, before the quote rather than buried
+//	description      a pull quote, because it is somebody talking
+//	media            a FIXED 16:9 box that is always there
+//	footer           a rule, then the credit, with room for the vote control
+//
+// The media box is the part that does the most work and the part most easily
+// undone. It is present on every card whether or not there is anything to put
+// in it, which is what stops a card with no trailer from collapsing to half
+// the height of the one beside it. base.css reserves the box; nothing here
+// measures anything.
+//
+// It is also never empty. A trailer that cannot be embedded -- the common case
+// today, since E5 (nap-0z8) has not landed and board.movieCard leaves
+// TrailerEmbedURL blank for every row -- puts its link INSIDE the box, so the
+// box is the poster slot and pressing it is how you watch the thing. Only a
+// film with no trailer at all gets a box that just says so.
+//
 // Every shape a movie row comes in is handled here rather than at the call
 // sites: no year, no description, no trailer, a trailer that cannot be
 // embedded, a blank submitter name, a title long enough to overflow the card.
-// base.css does the last one — .card__title sets overflow-wrap: anywhere and
-// .card sets min-inline-size: 0 so a grid child is allowed to shrink — which
+// base.css does the last one -- .card__title sets overflow-wrap: anywhere and
+// .card sets min-inline-size: 0 so a grid child is allowed to shrink -- which
 // is why nothing here truncates a title. A film's name is not decoration.
 //
 // It takes the theme rather than reading one off the movie, because a card is
@@ -22,13 +43,61 @@ import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 // the film.
 templ MovieCardItem(t Theme, m MovieCard) {
 	<li class="card">
-		if m.CanEmbedTrailer() {
-			// loading="lazy" is not a micro-optimisation here. A full slate is
-			// six of these, and six eager players on a phone on the group
-			// chat's data plan is most of a megabyte before anybody has
-			// pressed anything. The 16:9 box is reserved by base.css either
-			// way, so nothing moves when they load.
-			<div class="card__media">
+		// Struck through rather than dropped: a withdrawn film that simply
+		// vanishes from an admin list is how an admin comes to believe it is
+		// still on the public slate.
+		<h3 class="card__title">
+			if m.Hidden {
+				<s>{ m.TitleLine() }</s>
+			} else {
+				{ m.TitleLine() }
+			}
+		</h3>
+		if m.IsWinner || m.Hidden {
+			<p class="card__meta">
+				if m.IsWinner {
+					<span class="badge badge--accent">{ t.Text(viewmodel.KeyMovieWinnerBadge) }</span>
+				}
+				if m.Hidden {
+					<span class="badge">{ t.Text(viewmodel.KeyMovieWithdrawnBadge) }</span>
+				}
+			</p>
+		}
+		// A pull quote, not a field. It is the one piece of writing on the card
+		// that a person actually composed, and the left rule and the italic
+		// are what make it read as somebody talking rather than as a column
+		// out of a database. It is NOT set smaller: 2025 used text-sm here and
+		// base.css floors body text at 16px, so this is one of the two places
+		// the accessibility floor and the reference design genuinely disagree,
+		// and the floor wins.
+		if m.HasDescription() {
+			<p class="card__quote">{ m.Description }</p>
+		}
+		// The media box, always. Three fillings:
+		//
+		//   a player, when the link has an embed form;
+		//   the link itself, when it has not -- which is every link today,
+		//     because E5 (nap-0z8) has not landed;
+		//   the note that there is no trailer.
+		//
+		// loading="lazy" on the player is not a micro-optimisation. A full
+		// slate is six of these, and six eager players on a phone on the group
+		// chat's data plan is most of a megabyte before anybody has pressed
+		// anything. The 16:9 box is reserved by base.css either way, so
+		// nothing moves when they load.
+		//
+		// The comments for the other two branches are above this element
+		// rather than inside it: a templ comment between an element's tags
+		// emits its indentation as a text node, and the box's children are
+		// sized against it.
+		//
+		// A link, never an empty player, is the rule for the second branch;
+		// and the third says so rather than leaving a box that looks like it
+		// failed to load. Six cards also means six links reading "Watch the
+		// trailer" in a screen reader's link list, so each one carries the
+		// film's name and the warning about the new tab.
+		<div class="card__media">
+			if m.CanEmbedTrailer() {
 				<iframe
 					src={ m.TrailerEmbedURL }
 					title={ t.Text(viewmodel.KeyMovieTrailerTitle, viewmodel.PlaceholderTitle, m.Title) }
@@ -37,51 +106,28 @@ templ MovieCardItem(t Theme, m MovieCard) {
 					allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
 					allowfullscreen
 				></iframe>
-			</div>
-		}
-		<h3 class="card__title">
-			if m.Hidden {
-				// Struck through rather than dropped: a withdrawn film that
-				// simply vanishes from an admin list is how an admin comes to
-				// believe it is still on the public slate.
-				<s>{ m.TitleLine() }</s>
+			} else if m.HasTrailer() {
+				<div class="card__media-fill">
+					<a
+						class="btn btn--ghost"
+						href={ m.TrailerURL }
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						Watch the trailer
+						<span class="visually-hidden">
+							{ " for " + m.Title + " (opens in a new tab)" }
+						</span>
+					</a>
+				</div>
 			} else {
-				{ m.TitleLine() }
+				<div class="card__media-fill">
+					<p class="card__media-note mb-0">No trailer</p>
+				</div>
 			}
-		</h3>
-		<p class="card__meta">
-			if m.IsWinner {
-				<span class="badge badge--accent">{ t.Text(viewmodel.KeyMovieWinnerBadge) }</span>
-			}
-			if m.Hidden {
-				<span class="badge">{ t.Text(viewmodel.KeyMovieWithdrawnBadge) }</span>
-			}
-			<span>{ t.Text(viewmodel.KeyMovieSubmittedBy, viewmodel.PlaceholderName, m.SubmitterLabel()) }</span>
-		</p>
-		if m.HasDescription() {
-			<p class="card__body">{ m.Description }</p>
-		}
-		if m.HasTrailer() && !m.CanEmbedTrailer() {
-			// The common case: most trailer links are not YouTube watch URLs
-			// and have no embed form at all. A link is the answer, never an
-			// empty player.
-			<div class="card__actions">
-				<a
-					class="btn btn--ghost"
-					href={ m.TrailerURL }
-					target="_blank"
-					rel="noopener noreferrer"
-				>
-					{ t.Text(viewmodel.KeyMovieTrailerCTA) }
-					// Six cards means six links reading "Watch the trailer" in
-					// a screen reader's link list. The film's name is what
-					// tells them apart, and the new tab is worth warning about
-					// before it happens rather than after.
-					<span class="visually-hidden">
-						{ " for " + m.Title + " (opens in a new tab)" }
-					</span>
-				</a>
-			</div>
-		}
+		</div>
+		<div class="card__footer">
+			<span class="card__by">{ t.Text(viewmodel.KeyMovieSubmittedBy, viewmodel.PlaceholderName, m.SubmitterLabel()) }</span>
+		</div>
 	</li>
 }

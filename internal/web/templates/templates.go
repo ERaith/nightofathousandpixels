@@ -22,6 +22,8 @@ package templates
 
 import (
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
@@ -48,6 +50,13 @@ type (
 
 	// NavItem is one link in the site header. See viewmodel.NavItem.
 	NavItem = viewmodel.NavItem
+
+	// CurrentUser is the signed-in viewer. See viewmodel.CurrentUser.
+	//
+	// It is aliased here so that a package rendering one of these pages can
+	// fill in the header's account half without importing the view model for
+	// one struct literal.
+	CurrentUser = viewmodel.CurrentUser
 
 	// Flash is a one-shot message. See viewmodel.Flash.
 	Flash = viewmodel.Flash
@@ -110,6 +119,30 @@ const (
 // isCurrent reports whether a nav item points at the page being rendered.
 func isCurrent(p Page, item NavItem) bool {
 	return item.Href != "" && item.Href == p.Path
+}
+
+// accountInitial is the letter in the header's avatar disc.
+//
+// It is the first character of whatever the header prints beside it, upper-
+// cased, so the disc and the name can never disagree: both come from
+// CurrentUser.Label, which falls back to the email address when the provider
+// gave us no display name.
+//
+// DecodeRuneInString rather than s[0] because the first character is not
+// always one byte — "Siobhán" is fine either way, but a name that starts with
+// a non-ASCII letter would otherwise render as half a rune. The nil receiver
+// is Label's to handle, so there is no guard here.
+//
+// The disc is aria-hidden in the template, which is why the no-letter case can
+// be a bare "?": nothing reads it out, and it only arises for an account with
+// neither a name nor an address, which no signed-in viewer has.
+func accountInitial(u *viewmodel.CurrentUser) string {
+	r, size := utf8.DecodeRuneInString(u.Label())
+	if size == 0 || r == utf8.RuneError {
+		return "?"
+	}
+
+	return strings.ToUpper(string(r))
 }
 
 // noticeClass is the base.css modifier for a flash level. Info gets none: a

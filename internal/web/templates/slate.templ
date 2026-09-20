@@ -39,12 +39,7 @@ templ SlatePage(p Slate) {
 		// "Locked" under "Counted" with what looks like the same timestamp in
 		// both reads as a glitch rather than as two facts.
 		if p.Result == nil {
-			if date := seasonNextDate(p.Layout.Theme, p.Season); date.Set() {
-				<div class="measure">
-					<p class="meta mb-0">{ date.Label }</p>
-					<p class="countdown mb-0">{ date.Value }</p>
-				</div>
-			}
+			@SeasonStrip(p)
 		}
 		// An empty board carries its own invitation, so the action strip
 		// stands down for it. Two primary buttons a thumb apart, both going
@@ -103,52 +98,108 @@ templ SlatePage(p Slate) {
 // testing track is clear; Elvira dares somebody. Same page, same shape, same
 // button under the same thumb.
 templ EmptySlate(p Slate) {
+	{{ t := p.Layout.Theme }}
 	<div class="empty">
-		<h2 class="mt-0">{ p.Layout.Text(viewmodel.KeySlateEmptyHeading) }</h2>
-		<p class="measure centered">{ p.Layout.Text(viewmodel.KeySlateEmptyBody) }</p>
-		if p.CanSubmit && p.SubmitHref != "" {
-			<p>
-				<a class="btn btn--primary" href={ p.SubmitHref }>{ p.Layout.Text(viewmodel.KeySlateEmptyCTA) }</a>
-			</p>
-		} else if p.Layout.SignInHref != "" {
-			<p>
-				<a class="btn btn--primary" href={ p.Layout.SignInHref }>{ p.Layout.Text(viewmodel.KeySlateEmptySignIn) }</a>
-			</p>
-		}
-		if label := p.Layout.QuotaLabel(p.Quota); label != "" {
-			<p class="meta mb-0">{ label }</p>
+		<div class="empty__say">
+			<h2 class="mt-0">{ t.Text(viewmodel.KeySlateEmptyHeading) }</h2>
+			<p>{ t.Text(viewmodel.KeySlateEmptyBody) }</p>
+			if p.CanSubmit && p.SubmitHref != "" {
+				<a class="btn btn--primary" href={ p.SubmitHref }>{ t.Text(viewmodel.KeySlateEmptyCTA) }</a>
+			} else if p.Layout.SignInHref != "" {
+				<a class="btn btn--primary" href={ p.Layout.SignInHref }>{ t.Text(viewmodel.KeySlateEmptySignIn) }</a>
+			}
+		</div>
+		@EmptySlatePreview()
+	</div>
+}
+
+// EmptySlatePreview is three empty cards in the shape of the real ones.
+//
+// It is the "something to look at" half of nap-luo, and it is not decoration
+// for its own sake: it shows the visitor what the thing they are being asked
+// to start actually looks like. Three outlines in the same grid, at the same
+// proportions, with the same media box — so the page reads as a board waiting
+// to be filled rather than as a page that failed to load, which is what a
+// centred paragraph on its own reads as.
+//
+// aria-hidden and not focusable, because there is nothing in it: a screen
+// reader has already been told nobody has gone first, and announcing three
+// empty articles after that is noise. It carries no text at all, so there is
+// nothing for it to hide.
+//
+// It has no animation, which is the difference between this and a loading
+// skeleton. A skeleton pulses because something is coming; nothing is coming
+// here until somebody presses the button.
+templ EmptySlatePreview() {
+	<div class="slate-preview" aria-hidden="true">
+		for range 3 {
+			<div class="card card--ghost">
+				<span class="ghost ghost--title"></span>
+				<span class="ghost ghost--line"></span>
+				<div class="card__media"></div>
+				<span class="ghost ghost--credit"></span>
+			</div>
 		}
 	</div>
 }
 
-// SlateActions is the strip between the season and the board: the submit
-// control, or the reason there isn't one.
+// SeasonStrip is the deadline and your own allowance, side by side.
 //
-// The reason is Theme.QuotaLabel, which is written for each case rather than
-// shared — "You can vote this year, but not put films on the board" for a
-// member whose limit is an explicit zero, "You have used all 2 picks for this
-// year" for one who spent them. They are different facts about different people
-// and they need different sentences: one is a setting somebody chose, the other
-// is progress the viewer made.
+// These are the two facts somebody opens the slate to check — when does this
+// shut, and have I still got a pick — and until nap-luo they were two separate
+// paragraphs a scroll apart, one of them wrapped in a notice box. Putting them
+// in one bordered row is the whole change; neither sentence was rewritten.
 //
-// The pack owns those sentences and the view model owns the numbers in them. A
-// pack can tell somebody they have been greedy; it cannot tell them they have
-// one pick left when they have two.
+// Both cells are conditional and the strip renders nothing when neither is
+// there, rather than an empty bordered box. A season with no dates set is
+// real: all four window columns in migration 00002 are nullable. A viewer with
+// no quota is real too — that is everybody who is signed out.
+templ SeasonStrip(p Slate) {
+	{{ date := seasonNextDate(p.Layout.Theme, p.Season) }}
+	{{ quota := p.Quota.Label() }}
+	if date.Set() || quota != "" {
+		<div class="season-strip">
+			if date.Set() {
+				<div class="season-strip__cell">
+					<p class="season-strip__label mb-0">{ date.Label }</p>
+					<p class="countdown mb-0">{ date.Value }</p>
+				</div>
+			}
+			if quota != "" {
+				<div class="season-strip__cell season-strip__cell--aside">
+					<p class="season-strip__label mb-0">Your picks</p>
+					<p class="season-strip__value mb-0">{ quota }</p>
+				</div>
+			}
+		</div>
+	}
+}
+
+// SlateActions is the row between the season and the board: the submit
+// control, or the way in, or nothing.
+//
+// The REASON there is no control is no longer here. It is SubmitQuota.Label,
+// it is still written per case rather than shared — "You can vote this year,
+// but not put films on the board" for a member whose limit is an explicit
+// zero, "You have used all 2 picks for this year" for one who spent them —
+// and it now sits in SeasonStrip next to the deadline, because those two are
+// the pair of facts somebody opens this page to check. Printing it here as
+// well would say it twice; printing it only here made the page three stacked
+// paragraphs, which is what nap-luo is about.
+//
+// A member who cannot submit therefore gets nothing from this template. That
+// is deliberate and is not the same as saying nothing: the strip above has
+// already said it, in their own sentence.
 templ SlateActions(p Slate) {
 	if p.CanSubmit && p.SubmitHref != "" {
 		<div class="cluster">
-			<a class="btn btn--primary" href={ p.SubmitHref }>{ p.Layout.Text(viewmodel.KeySlateSubmitCTA) }</a>
-			if label := p.Layout.QuotaLabel(p.Quota); label != "" {
-				<p class="meta mb-0">{ label }</p>
-			}
+			<a class="btn btn--primary" href={ p.SubmitHref }>Put a movie up</a>
 		</div>
-	} else if label := p.Layout.QuotaLabel(p.Quota); label != "" {
-		<div class="notice" role="status">
-			<p class="mb-0">{ label }</p>
-		</div>
-	} else if p.Layout.SignInHref != "" {
-		// No quota at all and a way in: signed out. The films are public to
-		// read; adding one is not.
+	} else if p.Quota.Label() == "" && p.Layout.SignInHref != "" {
+		// No quota at all and a way in: signed out. A member who simply
+		// cannot add to the board has a quota, so they fall past this and
+		// get nothing here -- the strip above has already told them why.
+		// The films are public to read; adding one is not.
 		<div class="cluster">
 			<a class="btn btn--ghost" href={ p.Layout.SignInHref }>{ p.Layout.Text(viewmodel.KeySlateSignInCTA) }</a>
 			<p class="meta mb-0">{ p.Layout.Text(viewmodel.KeySlateSignInNote) }</p>

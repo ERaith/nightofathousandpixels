@@ -60,7 +60,10 @@ func TestSubmitBlankFormIsComplete(t *testing.T) {
 	main := mainContent(t, page)
 
 	for _, want := range []string{
-		`<form method="post" action="/2026/submit">`,
+		// One panel rather than a run of controls down the page (nap-luo):
+		// the class is what makes four fields and a button read as a single
+		// thing to fill in.
+		`<form class="panel" method="post" action="/2026/submit">`,
 		`<label for="submit-title">Title</label>`,
 		`<label for="submit-year">Year</label>`,
 		`<label for="submit-trailer-url">Trailer link</label>`,
