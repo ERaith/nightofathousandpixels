@@ -20,6 +20,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/config"
 	"github.com/ERaith/nightofathousandpixels/internal/signin"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
+	"github.com/ERaith/nightofathousandpixels/internal/theme"
 	"github.com/ERaith/nightofathousandpixels/internal/web"
 	"github.com/ERaith/nightofathousandpixels/internal/web/board"
 	"github.com/ERaith/nightofathousandpixels/internal/web/health"
@@ -200,6 +201,13 @@ func discoverProvider(ctx context.Context, cfg *config.Config, logger *slog.Logg
 	}
 }
 
+// themesDir is where the theme packs live, relative to the working directory
+// the server starts from — the same convention staticDir already uses. It is
+// read once at startup and never again: a theme is decided in September and
+// then left alone, and a pack changing under a running server is a thing nobody
+// wants to debug while thirty people are on the site.
+const themesDir = "themes"
+
 func newRouter(
 	cfg *config.Config,
 	logger *slog.Logger,
@@ -230,6 +238,29 @@ func newRouter(
 
 	queries := store.New(pool)
 
+	// The theme packs. A pack that does not load is logged and skipped inside
+	// theme.New, and the pages it would have themed render in base.css's own
+	// contrast-checked palette instead — a plain, readable site rather than a
+	// server that will not start because of a trailing comma in a JSON file.
+	packs, err := theme.New(themesDir, logger)
+	if err != nil {
+		// Only an unreadable themes directory reaches here, and that is still
+		// not worth refusing to serve over.
+		logger.Error("theme packs could not be read; running unthemed",
+			slog.String("dir", themesDir), slog.Any("error", err))
+		packs = nil
+	}
+	pack := currentThemePack(queries, logger)
+	logger.Info("theme",
+		slog.String("pack", pack),
+		slog.Any("available", packs.Names()),
+	)
+
+	// The sign-in flow's own pages go through templates.Layout too, so they
+	// take the same pack. Its theme is fixed rather than per-request: ?theme=
+	// is an admin's tool for judging a pack against the slate, and the pages
+	// somebody sees while they are still proving who they are are not where
+	// that judgement is made.
 	accounts := signin.New(signin.Options{
 		Auth:     authenticator,
 		Sessions: sessions,
@@ -237,6 +268,7 @@ func newRouter(
 		Logger:   logger,
 		Origin:   cfg.Origin,
 		Nav:      nav,
+		Theme:    packs.Theme(pack),
 	})
 	accounts.Routes(r)
 
@@ -253,11 +285,85 @@ func newRouter(
 		Logger:        logger,
 		Origin:        cfg.Origin,
 		Nav:           nav,
+		Theme:         packs.Theme(pack),
 	}).Routes(r)
 
-	// The HTML pages and /static/. Origin is only used to build absolute URLs
-	// for link previews; nothing here reads the database.
-	web.New(web.Options{Origin: cfg.Origin, Nav: nav}).Routes(r)
+	// The HTML pages, /static/ and /theme/. Origin is only used to build
+	// absolute URLs for link previews.
+	web.New(web.Options{
+		Origin:       cfg.Origin,
+		Nav:          nav,
+		Themes:       packs,
+		Pack:         pack,
+		ThemePreview: adminThemePreview(sessions, queries, logger),
+	}).Routes(r)
 
 	return r
+}
+
+// currentThemePack reads season.theme_pack for the open season.
+//
+// A season nobody has opened yet, an unreachable database at startup, or a
+// column still holding its 'default' all mean the same thing: the unthemed
+// site. None of them is a reason not to serve, because the pages that matter
+// most in those states are the ones explaining what is going on.
+func currentThemePack(q *store.Queries, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	season, err := q.GetCurrentSeason(ctx)
+	if err != nil {
+		logger.Warn("no current season to take a theme from; running unthemed",
+			slog.Any("error", err))
+
+		return theme.DefaultPackName
+	}
+
+	return season.ThemePack
+}
+
+// adminThemePreview is the gate on ?theme=.
+//
+// Previewing is how the 2026 theme gets chosen in late September: two people
+// argue about Portal versus Elvira and settle it by looking at the real slate
+// on a real phone, thirty seconds apart, instead of one deploy per opinion.
+// That makes it an admin's tool, and season_member.is_admin is what an admin
+// is here — there is no global admin in this project.
+//
+// The lookup only runs when ?theme= is present, which is close to never, so
+// two queries on those requests is not a cost worth designing around. Any
+// failure at all is a no: a preview that cannot be authorised is simply not a
+// preview, and the visitor gets the season's real theme rather than an error
+// about a feature they did not ask for.
+func adminThemePreview(sessions *auth.Sessions, q *store.Queries, logger *slog.Logger) theme.Authorizer {
+	return func(r *http.Request) bool {
+		session, err := sessions.Read(r)
+		if err != nil {
+			return false
+		}
+
+		ctx := r.Context()
+		season, err := q.GetCurrentSeason(ctx)
+		if err != nil {
+			return false
+		}
+
+		member, err := q.GetSeasonMember(ctx, store.GetSeasonMemberParams{
+			SeasonID: season.ID,
+			PersonID: session.PersonID,
+		})
+		if err != nil {
+			return false
+		}
+		if !member.IsAdmin {
+			return false
+		}
+
+		logger.Info("theme preview",
+			slog.String("email", session.Email),
+			slog.String("pack", r.URL.Query().Get(theme.PreviewParam)),
+		)
+
+		return true
+	}
 }

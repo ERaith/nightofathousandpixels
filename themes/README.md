@@ -161,28 +161,189 @@ HTML or to white-on-white.
 
 ### Manifest
 
-Ticket **F2** owns the manifest format and the Go loader that turns it into
-`:root` custom properties; treat the shape below as the expected input to
-this contract rather than as the final schema. `check-contrast.py` reads
-it today:
+`internal/theme` reads `manifest.json` and generates the stylesheet the
+page links. `check-contrast.py` reads the same file:
 
 ```json
 {
   "name": "portal",
   "label": "Portal",
+  "description": "Aperture Science. Institutional orange and blue on near-black.",
   "tokens": {
-    "bg": "#0d1117",
-    "surface": "#161b22",
-    "accent": "#ffb454",
-    "accent-alt": "#7ee787",
-    "text": "#f0f6fc",
-    "muted": "#b1bac4",
-    "font-display": "\"Portal Sans\", Georgia, serif",
+    "bg": "#0b0d10",
+    "surface": "#14181e",
+    "accent": "#ff9f4a",
+    "accent-alt": "#5cc8ff",
+    "text": "#eef1f4",
+    "muted": "#a7b0ba",
+    "font-display": "\"DIN Alternate\", \"Arial Narrow\", sans-serif",
     "font-body": "ui-sans-serif, system-ui, sans-serif"
-  }
+  },
+  "og_image": "og.png",
+  "og_image_alt": "Night of a Thousand Pixels 2026, as an Aperture testing notice.",
+  "copy": { "…": "see below" }
 }
 ```
 
-Theme *copy* (headings, button labels, the tagline) is ticket **F3** and
-lands in the same manifest under a `copy` key, with base strings as the
-fallback. Nothing in this file changes when that arrives.
+`name` must match the directory, so a copied-and-renamed pack says so
+instead of quietly answering to the old theme's name.
+
+Unknown fields are rejected, not ignored. A manifest is hand-written JSON
+with no schema in front of it and no compiler behind it, so `"colours"` for
+`"tokens"` is the likeliest mistake anybody will make, and a pack that
+loads, renders wrong and gives no reason is worse than one that refuses.
+
+A pack directory can hold three things:
+
+```
+themes/portal/
+  manifest.json      colours, fonts, copy, share image
+  theme.css          optional; custom properties only
+  assets/            fonts, images, icons
+```
+
+and the site serves exactly two URLs per pack:
+
+```
+/theme/portal/theme.css          generated: the :root block, then theme.css
+/theme/portal/assets/og.png      anything under assets/
+```
+
+`assets/` is the only part of the directory that is public. `manifest.json`
+and `theme.css` are the site's inputs, not its outputs, and a pack directory
+is somewhere a designer drops files.
+
+`og_image` names a file inside `assets/` and becomes the share card these
+links get in the group chat. `og_image_alt` is required alongside it: it is
+the one image on the whole site guaranteed to be seen out of context.
+
+#### What the loader refuses
+
+The loader is the second lock, not the first. `base.css` is the enforcement
+— it loads last, holds every floor in `@layer nap-enforce`, and writes each
+one as `max(<literal>, var(--token))`, so a pack hand-written into `static/`
+by somebody who never went near this loader still loses to it. What the
+loader adds is a *reason*, at load, with a line number, instead of a
+surprise in a browser six weeks later. It refuses:
+
+- a token that is not on the list above, including any `--_` private one;
+- a token value containing `;`, `{`, `}`, `<`, `>`, a backslash, a newline
+  or a CSS comment — a value that needs one of those is not a value, it is a
+  rule, and it would be a rule on `:root` with a pack's name on it;
+- a `theme.css` containing `--_`, `!important`, `:focus`, `outline`,
+  `prefers-reduced-motion`, `@layer` or `@import`.
+
+Quotes are allowed — a font stack cannot be written without them — and
+checked for balance instead.
+
+A pack that fails any of this is logged and skipped. The other packs load,
+the server starts, and the pages that pack would have themed render in the
+base palette with the base copy.
+
+---
+
+## Copy
+
+`copy` is the fourth thing a pack owns, and it is the one that does most of
+the work. The 2025 site was ALIEN and the part people reacted to was not the
+green — it was that the button did not say "Submit".
+
+```json
+"copy": {
+  "site.title": "Aperture Screening Initiative",
+  "noun.film.one": "test chamber",
+  "noun.film.many": "test chambers",
+  "slate.empty.heading": "Nobody has volunteered yet",
+  "submit.heading": "Submit a test chamber",
+  "submit.blocked.at_limit.heading": "That is both of your proposals",
+  "submit.blocked.at_limit.body_dated": "{quota} They are listed below. Evaluation begins on {date}."
+}
+```
+
+Every key is optional. What a pack omits it inherits from
+`viewmodel.BaseCopy`, which is not a placeholder set — it is the finished
+copy of an unthemed Night of a Thousand Pixels. So a half-written pack
+renders a whole site, and "Portal has nothing to say about error pages"
+degrades to a good error page rather than to a key name.
+
+The whole list of keys is the `Key*` constants in
+`internal/web/viewmodel/copy.go`, with each one's base string next to it in
+`BaseCopy`. A key that no longer exists there is inert rather than an error:
+a pack outlives the templates that introduced it, and the 2026 pack has to
+keep rendering in 2029 when somebody reads the archive.
+
+### Facts are not copy
+
+A pack writes the sentence. The view model writes the numbers, dates, names
+and counts inside it, through `{placeholders}`:
+
+| Placeholder | What arrives |
+|---|---|
+| `{count}` | a number already rendered with the pack's own noun: "6 test chambers" |
+| `{quota}` | the whole "you have used all 2 proposals" sentence |
+| `{season}` | the season's label |
+| `{date}` | a formatted timestamp |
+| `{title}` | a film's title |
+| `{name}` | a person's display name |
+| `{limit}` | a bare allowance number |
+| `{status}` | an HTTP status code |
+
+That is why `noun.pick.one` is a key and "1 pick left of 2" is not. A pack
+may tell somebody they have been greedy; it may not tell them they have one
+pick left when they have two.
+
+Placeholders are named rather than positional (`%s`) because a pack author
+rewrites these in a JSON file with no compiler: "{season} is in the archive"
+has to survive being reordered into "the archive has {season} in it". An
+unknown placeholder is left alone, so a typo shows as `{seasons}` on the
+page — visible and findable, rather than a sentence with a hole in it.
+
+Copy is text. templ escapes every string at render time, so a manifest
+cannot put markup on a page, by accident or on purpose.
+
+---
+
+## Judging a pack
+
+```console
+$ go run ./cmd/themegallery -addr :8240
+$ open http://localhost:8240/gallery
+```
+
+Every page of the site, in every state, under every pack, from the same
+fixtures the template tests use — no database, no OIDC provider, no
+migrations. It is a development tool and it opens the preview gate to
+everybody, so it does not belong anywhere a stranger can reach it.
+
+On a deployed site the same thing is `?theme=`, which works on any page for
+a season admin (`season_member.is_admin`) and nobody else:
+
+```
+/?theme=portal
+/?theme=elvira
+/?theme=none      <- the unthemed site, asked for on purpose
+```
+
+`?theme=none` is the one worth remembering. "Does this page still work with
+no pack at all?" is the question a pack author cannot answer from inside
+their pack, and it is the promise this file makes further up.
+
+A preview lasts exactly one request. It sets no cookie and is not
+remembered, so it can be pasted into the group chat and opened on somebody
+else's phone — and so that an admin who forgets about it does not spend
+October looking at a pack nobody else can see.
+
+### The list to walk
+
+Under both packs, at 320px and on a desktop:
+
+- the slate, empty — the morning of 1 October, and the state most people see
+  first;
+- the slate, full;
+- the submit form;
+- the submit page refusing — the cap, the closed window, the voting-only
+  member;
+- the 404.
+
+Then tab through each one. If you cannot see where the focus is at every
+stop, something in the pack is fighting base — find it and delete it.

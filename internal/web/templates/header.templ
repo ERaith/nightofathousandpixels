@@ -1,5 +1,7 @@
 package templates
 
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
 // SiteHeader is the wordmark and the primary navigation.
 //
 // The nav is data, not markup: a page hands Layout the links it wants, and the
@@ -15,7 +17,7 @@ templ SiteHeader(p Page) {
 		<div class="container site-header__inner">
 			<a class="wordmark" href="/">{ theme.SiteTitle }</a>
 			if len(p.Nav) > 0 {
-				<nav class="nav" aria-label="Primary">
+				<nav class="nav" aria-label={ p.Text(viewmodel.KeyNavLabel) }>
 					for _, item := range p.Nav {
 						if isCurrent(p, item) {
 							<a href={ item.Href } aria-current="page">{ item.Label }</a>

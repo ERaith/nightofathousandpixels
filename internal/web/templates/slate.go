@@ -31,23 +31,23 @@ func (d nextDate) Set() bool {
 // If a real counting-down number is wanted later, it belongs in the view model
 // as a handler-computed field, or in a progressive-enhancement script that
 // reads the timestamp out of the markup. Not here.
-func seasonNextDate(season SeasonSummary) nextDate {
+func seasonNextDate(t Theme, season SeasonSummary) nextDate {
 	switch season.State {
 	case viewmodel.SeasonDraft:
-		return nextDate{Label: "Submissions open", Value: season.SubmitOpensLabel()}
+		return nextDate{Label: t.Text(viewmodel.KeySeasonDateSubmitOpens), Value: season.SubmitOpensLabel()}
 
 	case viewmodel.SeasonSubmitting:
 		// vote_opens_at is when the board shuts: there is no separate
 		// submissions-close column, and the two are the same moment.
 		// SeasonState.Summary has already said so in words just above, so the
 		// label here is the short one.
-		return nextDate{Label: "Ranking opens", Value: season.VoteOpensLabel()}
+		return nextDate{Label: t.Text(viewmodel.KeySeasonDateVoteOpens), Value: season.VoteOpensLabel()}
 
 	case viewmodel.SeasonVoting:
-		return nextDate{Label: "Voting closes", Value: season.VoteClosesLabel()}
+		return nextDate{Label: t.Text(viewmodel.KeySeasonDateVoteCloses), Value: season.VoteClosesLabel()}
 
 	case viewmodel.SeasonLocked:
-		return nextDate{Label: "Locked", Value: season.LockedLabel()}
+		return nextDate{Label: t.Text(viewmodel.KeySeasonDateLocked), Value: season.LockedLabel()}
 
 	default:
 		return nextDate{}
@@ -60,10 +60,10 @@ func seasonNextDate(season SeasonSummary) nextDate {
 // absent at once — a season row always has a year, yet a page rendered from a
 // zero SlatePage does not. An empty h1 is a document with no title for anyone
 // navigating by heading, so there is a last fallback here.
-func slateHeading(season SeasonSummary) string {
+func slateHeading(t Theme, season SeasonSummary) string {
 	if label := season.Label(); label != "" {
 		return label
 	}
 
-	return "The slate"
+	return t.Text(viewmodel.KeySlateHeadingFallback)
 }

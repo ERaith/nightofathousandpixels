@@ -1,5 +1,7 @@
 package templates
 
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
 // ErrorPage is a full error page inside the normal site shell, so a 404 still
 // has the header, the wordmark and a way back rather than Go's bare
 // "404 page not found" on a white background.
@@ -7,15 +9,18 @@ package templates
 // It takes its copy as data so the two exported wrappers below are the only
 // places any of it is written down.
 templ ErrorPage(p Page, e ErrorContent) {
+	{{ content := e.Themed(p.Theme) }}
 	@Layout(p) {
 		<div class="measure">
 			<div class="page-head">
-				<p class="badge">Error { e.StatusText() }</p>
-				<h1>{ e.Heading }</h1>
+				<p class="badge">
+					{ p.Text(viewmodel.KeyErrorBadge, viewmodel.PlaceholderStatus, content.StatusText()) }
+				</p>
+				<h1>{ content.Heading }</h1>
 			</div>
-			<p class="lead">{ e.Body }</p>
+			<p class="lead">{ content.Body }</p>
 			<div class="cluster">
-				<a class="btn btn--primary" href="/">Back to the front page</a>
+				<a class="btn btn--primary" href="/">{ p.Text(viewmodel.KeyErrorBack) }</a>
 			</div>
 		</div>
 	}

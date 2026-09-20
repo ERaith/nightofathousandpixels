@@ -34,46 +34,42 @@ type blockedCopy struct {
 // viewer made themselves, and the films they made it with are on the same
 // page. "You have used all your picks" told to a voting-only member is both
 // wrong and unanswerable.
-func submitBlockedCopy(p Submit) blockedCopy {
+func submitBlockedCopy(t Theme, p Submit) blockedCopy {
 	switch {
 	case p.Season.State == viewmodel.SeasonLocked:
 		return blockedCopy{
-			Heading: "That year is finished",
-			Body: p.Season.Label() + " is in the archive, and an archived year does not change. " +
-				"Its slate is what it is.",
+			Heading: t.Text(viewmodel.KeyBlockedLockedHeading),
+			Body:    t.Text(viewmodel.KeyBlockedLockedBody, viewmodel.PlaceholderSeason, p.Season.Label()),
 		}
 
 	case p.Season.State == viewmodel.SeasonVoting:
 		return blockedCopy{
-			Heading: "The board is closed",
-			Body: "Submissions are done for this year — everything that made it is on the slate. " +
-				"Ranking is what decides the rest now.",
+			Heading: t.Text(viewmodel.KeyBlockedVotingHeading),
+			Body:    t.Text(viewmodel.KeyBlockedVotingBody),
 		}
 
 	case p.Season.State == viewmodel.SeasonDraft:
 		return blockedCopy{
-			Heading: "This year has not opened yet",
-			Body:    draftBody(p.Season),
+			Heading: t.Text(viewmodel.KeyBlockedDraftHeading),
+			Body:    draftBody(t, p.Season),
 		}
 
 	case p.Quota.Barred():
 		return blockedCopy{
-			Heading: "You are on the list to vote",
-			Body: p.Quota.Label() + " That is a setting on your name rather than something you " +
-				"used up, so say something in the group chat if it looks wrong.",
+			Heading: t.Text(viewmodel.KeyBlockedBarredHeading),
+			Body:    t.Text(viewmodel.KeyBlockedBarredBody, viewmodel.PlaceholderQuota, t.QuotaLabel(p.Quota)),
 		}
 
 	case p.Quota.AtLimit():
 		return blockedCopy{
-			Heading: "That is both your picks",
-			Body:    p.Quota.Label() + " " + atLimitTail(p.Season),
+			Heading: t.Text(viewmodel.KeyBlockedAtLimitHeading),
+			Body:    atLimitBody(t, t.QuotaLabel(p.Quota), p.Season),
 		}
 
 	case !p.Quota.Known:
 		return blockedCopy{
-			Heading: "Submitting is for this year's group",
-			Body: "The board is public to read and not to write. If you are on this year's list, " +
-				"sign in with the account you gave us; if you are not, ask in the group chat.",
+			Heading: t.Text(viewmodel.KeyBlockedOutsiderHeading),
+			Body:    t.Text(viewmodel.KeyBlockedOutsiderBody),
 		}
 
 	default:
@@ -81,9 +77,8 @@ func submitBlockedCopy(p Submit) blockedCopy {
 		// a handler knows something the view model does not carry. Say the
 		// true, small thing rather than guessing at the reason.
 		return blockedCopy{
-			Heading: "Not right now",
-			Body: "The board is not taking your submission at the moment. The slate is still there " +
-				"to read, and the group chat is the fastest way to find out why.",
+			Heading: t.Text(viewmodel.KeyBlockedUnknownHeading),
+			Body:    t.Text(viewmodel.KeyBlockedUnknownBody),
 		}
 	}
 }
@@ -91,20 +86,28 @@ func submitBlockedCopy(p Submit) blockedCopy {
 // draftBody names the opening date when there is one. A season can exist with
 // every window column NULL — migration 00002 allows it — so "Submissions open"
 // with nothing after it is a real possibility and not a nicety.
-func draftBody(season SeasonSummary) string {
+func draftBody(t Theme, season SeasonSummary) string {
 	if opens := season.SubmitOpensLabel(); opens != "" {
-		return "The board opens on " + opens + ". The link lands in the group chat when it does."
+		return t.Text(viewmodel.KeyBlockedDraftDated, viewmodel.PlaceholderDate, opens)
 	}
 
-	return "The dates for this year are not set yet. The link lands in the group chat once they are."
+	return t.Text(viewmodel.KeyBlockedDraftUndated)
 }
 
-// atLimitTail points someone who has used both picks at what happens next,
-// and says nothing about a date that has not been scheduled.
-func atLimitTail(season SeasonSummary) string {
+// atLimitBody points someone who has used both picks at what happens next, and
+// says nothing about a date that has not been scheduled.
+//
+// The quota sentence goes in as a placeholder rather than being prepended, so a
+// pack can put "You have used all 2 picks for this year" where its own sentence
+// wants it — or, if the voice calls for it, lead with its own line and let the
+// fact follow. What it cannot do is change the fact, which is why this is the
+// view model's Label and not a copy key.
+func atLimitBody(t Theme, quota string, season SeasonSummary) string {
 	if opens := season.VoteOpensLabel(); opens != "" {
-		return "They are below. Ranking opens on " + opens + "."
+		return t.Text(viewmodel.KeyBlockedAtLimitDated,
+			viewmodel.PlaceholderQuota, quota,
+			viewmodel.PlaceholderDate, opens)
 	}
 
-	return "They are below, and ranking opens once submissions close."
+	return t.Text(viewmodel.KeyBlockedAtLimitUndated, viewmodel.PlaceholderQuota, quota)
 }

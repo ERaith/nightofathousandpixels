@@ -1,5 +1,7 @@
 package templates
 
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
 // SubmitPage is the form for putting a movie on the board.
 //
 // There are two whole versions of this page and no half-version: either the
@@ -17,15 +19,12 @@ templ SubmitPage(p Submit) {
 			if label := p.Season.Label(); label != "" {
 				<p class="badge">{ label }</p>
 			}
-			<h1>Put a movie on the board</h1>
+			<h1>{ p.Layout.Text(viewmodel.KeySubmitHeading) }</h1>
 			// The lead is instructions for filling the form in, so it goes
 			// when the form does. A page that explains how to do a thing and
 			// then says you cannot do it is a page that was not read back.
 			if p.CanSubmit && p.Action != "" {
-				<p class="lead">
-					A title is all we need. A trailer link and a line about why
-					you picked it is what makes somebody else rank it first.
-				</p>
+				<p class="lead">{ p.Layout.Text(viewmodel.KeySubmitLead) }</p>
 			}
 		</div>
 		if p.CanSubmit && p.Action != "" {
@@ -35,10 +34,14 @@ templ SubmitPage(p Submit) {
 		}
 		if len(p.Existing) > 0 {
 			<section>
-				<h2>{ countOf(len(p.Existing), "film", "films") } from you so far</h2>
+				<h2>
+					{ p.Layout.Text(viewmodel.KeySubmitExistingHead,
+						viewmodel.PlaceholderCount,
+						p.Layout.Count(len(p.Existing), viewmodel.KeyFilmOne, viewmodel.KeyFilmMany)) }
+				</h2>
 				<ul class="card-grid">
 					for _, movie := range p.Existing {
-						@MovieCardItem(movie)
+						@MovieCardItem(p.Layout.Theme, movie)
 					}
 				</ul>
 			</section>
@@ -58,12 +61,12 @@ templ SubmitPage(p Submit) {
 // check is the first line and the server's is the one that counts. Nothing
 // here depends on JavaScript being present.
 templ SubmitFormSection(p Submit) {
-	{{ fields := newSubmitFields(p.Form) }}
+	{{ fields := newSubmitFields(p.Layout.Theme, p.Form) }}
 	<div class="measure">
-		if label := p.Quota.Label(); label != "" {
+		if label := p.Layout.QuotaLabel(p.Quota); label != "" {
 			<p class="meta">{ label }</p>
 		}
-		@SubmitErrorSummary(fields)
+		@SubmitErrorSummary(p.Layout.Theme, fields)
 		<form method="post" action={ p.Action }>
 			@formRow(fields.Title) {
 				<input
@@ -119,9 +122,9 @@ templ SubmitFormSection(p Submit) {
 				>{ fields.Description.Value }</textarea>
 			}
 			<div class="form-actions">
-				<button class="btn btn--primary" type="submit">Put it on the board</button>
+				<button class="btn btn--primary" type="submit">{ p.Layout.Text(viewmodel.KeySubmitButton) }</button>
 				if p.CancelHref != "" {
-					<a class="btn btn--ghost" href={ p.CancelHref }>Cancel</a>
+					<a class="btn btn--ghost" href={ p.CancelHref }>{ p.Layout.Text(viewmodel.KeySubmitCancel) }</a>
 				}
 			</div>
 		</form>
@@ -138,12 +141,16 @@ templ SubmitFormSection(p Submit) {
 // It renders nothing at all when the form is clean, rather than an empty
 // container, because the container is a child of a .stack and would otherwise
 // take a gap for saying nothing.
-templ SubmitErrorSummary(fields submitFields) {
+templ SubmitErrorSummary(t Theme, fields submitFields) {
 	if bad := fields.Invalid(); len(bad) > 0 {
 		<div class="notice notice--error" id="submit-errors" tabindex="-1" role="alert">
 			<div>
 				<p class="mt-0">
-					<strong>{ countOf(len(bad), "thing", "things") } to fix before this goes up.</strong>
+					<strong>
+						{ t.Text(viewmodel.KeySubmitErrorsHeading,
+							viewmodel.PlaceholderCount,
+							t.Count(len(bad), viewmodel.KeyThingOne, viewmodel.KeyThingMany)) }
+					</strong>
 				</p>
 				<ul class="mb-0">
 					for _, field := range bad {
@@ -165,13 +172,13 @@ templ SubmitErrorSummary(fields submitFields) {
 // because every one of these cases is a no that the handler has already made
 // and the database would enforce again underneath it.
 templ SubmitBlockedSection(p Submit) {
-	{{ blocked := submitBlockedCopy(p) }}
+	{{ blocked := submitBlockedCopy(p.Layout.Theme, p) }}
 	<section class="measure">
 		<h2>{ blocked.Heading }</h2>
 		<p class="lead">{ blocked.Body }</p>
 		if p.CancelHref != "" {
 			<div class="cluster">
-				<a class="btn btn--primary" href={ p.CancelHref }>See what is on the board</a>
+				<a class="btn btn--primary" href={ p.CancelHref }>{ p.Layout.Text(viewmodel.KeySubmitBack) }</a>
 			</div>
 		}
 	</section>

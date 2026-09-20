@@ -16,6 +16,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ERaith/nightofathousandpixels/internal/theme"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
 )
 
@@ -41,9 +42,36 @@ type Options struct {
 	// StaticDir is the directory served under /static/. Blank means "static".
 	StaticDir string
 
-	// Theme is the theme pack's presentation values. Ticket F2 fills this from
-	// a manifest; the zero value falls back to base.css's own palette.
+	// Theme is the theme pack's presentation values, set directly.
+	//
+	// It is the override rather than the normal path: a caller that has a
+	// Themes registry names a pack with Pack and lets the registry build this.
+	// A non-zero value here wins, which is what a test wanting one specific
+	// Theme and no filesystem needs.
 	Theme templates.Theme
+
+	// Themes is every loaded theme pack. Nil is the unthemed site, which is a
+	// supported state: base.css's own contrast-checked palette and
+	// viewmodel.BaseCopy, as themes/README.md promises.
+	Themes *theme.Registry
+
+	// Pack is the theme pack this site renders in, by name —
+	// season.theme_pack. "default" and a name the registry does not have both
+	// mean the unthemed site.
+	//
+	// It is one value for the whole Site rather than a per-request lookup
+	// because there is one live season at a time and its theme was decided in
+	// September. When D1 makes the season a per-request fact, this becomes a
+	// field on the page rather than on the Site, and nothing else here moves.
+	Pack string
+
+	// ThemePreview decides who may use ?theme= to render a page in another
+	// pack. Nil is nobody, which is the right default: the preview is how the
+	// 2026 theme gets chosen in late September, and it is an admin's tool.
+	//
+	// See theme.Authorizer. cmd/server passes the real check; a local gallery
+	// passes theme.Anyone.
+	ThemePreview theme.Authorizer
 
 	// Season is the year shown on the front page and in the footer. Zero means
 	// defaultSeason.
@@ -79,25 +107,58 @@ func New(opts Options) *Site {
 	return &Site{opts: opts, nav: opts.Nav}
 }
 
-// Routes mounts the pages and the static file handler onto r, and installs the
-// site's own 404 and 405 pages in place of Go's plain-text ones.
+// Routes mounts the pages, the static file handler and the theme packs onto r,
+// and installs the site's own 404 and 405 pages in place of Go's plain-text
+// ones.
+//
+// Every HTML handler goes through themed, which is what makes ?theme= work.
+// The static and theme-asset handlers deliberately do not: a stylesheet is
+// fetched by URL and a preview that changed which bytes came back from
+// /theme/portal/theme.css would be previewing the wrong thing.
 func (s *Site) Routes(r chi.Router) {
-	r.Get("/", s.handleHome)
+	r.Get("/", s.themed(s.handleHome))
 	r.Handle(staticPrefix+"*", s.staticHandler())
+	r.Handle(theme.URLPrefix+"*", s.opts.Themes.Handler(s.NotFound))
 
-	r.NotFound(s.NotFound)
-	r.MethodNotAllowed(s.methodNotAllowed)
+	r.NotFound(s.themed(s.NotFound))
+	r.MethodNotAllowed(s.themed(s.methodNotAllowed))
+}
+
+// themed wraps an HTML handler in the ?theme= preview middleware.
+//
+// With no ThemePreview authorizer this is the identity function in all but
+// name: the middleware sees a nil Authorizer and passes straight through, so
+// the ordinary site pays a closure call and nothing else.
+func (s *Site) themed(h http.HandlerFunc) http.HandlerFunc {
+	return s.opts.Themes.Preview(s.opts.ThemePreview, h).ServeHTTP
 }
 
 // page builds the shell data every page shares.
 func (s *Site) page(r *http.Request) templates.Page {
 	return templates.Page{
-		Theme:      s.opts.Theme,
+		Theme:      s.theme(r),
 		Origin:     s.opts.Origin,
 		Path:       r.URL.Path,
 		Nav:        s.nav,
 		SeasonYear: s.opts.Season,
 	}
+}
+
+// theme picks the pack this request renders in.
+//
+// The preview wins when there is one, including when it is the deliberate
+// choice of no pack at all — that is the whole value of ?theme=none, and it is
+// why PreviewedTheme returns a bool rather than letting a zero Theme mean
+// "nothing was asked for".
+func (s *Site) theme(r *http.Request) templates.Theme {
+	if t, ok := theme.PreviewedTheme(r.Context()); ok {
+		return t
+	}
+	if s.opts.Theme.IsSet() {
+		return s.opts.Theme
+	}
+
+	return s.opts.Themes.Theme(s.opts.Pack)
 }
 
 func (s *Site) handleHome(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,7 @@
 package templates
 
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
 // Layout is the html/head/body skeleton every page on the site sits in. A page
 // template calls it with its own content as children:
 //
@@ -85,7 +87,7 @@ templ Layout(p Page) {
 		<body>
 			// First thing in the tab order. base.css slides it into view the
 			// moment it takes focus.
-			<a class="skip-link" href="#main">Skip to content</a>
+			<a class="skip-link" href="#main">{ p.Text(viewmodel.KeySkipLink) }</a>
 			@SiteHeader(p)
 			// tabindex="-1" is what makes the skip link actually move focus
 			// rather than only scrolling the page.

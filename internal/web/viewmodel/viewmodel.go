@@ -72,21 +72,47 @@ type Theme struct {
 
 	// OGImageAlt describes OGImage for people whose reader announces it.
 	OGImageAlt string
+
+	// Copy is the pack's wording, keyed by the Key* constants in copy.go. Nil
+	// is the normal state for an unthemed site and renders every string out of
+	// BaseCopy, so nothing has to check it. See Copy.
+	Copy Copy
 }
 
 // Resolve returns a copy of t with every blank field filled in.
+//
+// SiteTitle and Tagline are filled from the pack's own copy before the base
+// defaults, so a pack that sets site.title in its manifest does not also have
+// to say it twice. They stay as fields rather than becoming copy keys outright
+// because they are the two strings the <head> needs before any page exists,
+// and because Theme{SiteTitle: "..."} is how every existing caller and fixture
+// already says it.
 func (t Theme) Resolve() Theme {
 	if t.PackCSS == "" {
 		t.PackCSS = DefaultPackCSS
 	}
 	if t.SiteTitle == "" {
-		t.SiteTitle = DefaultSiteTitle
+		t.SiteTitle = t.Copy.Text(KeySiteTitle)
 	}
 	if t.Tagline == "" {
-		t.Tagline = DefaultTagline
+		t.Tagline = t.Copy.Text(KeySiteTagline)
 	}
 
 	return t
+}
+
+// IsSet reports whether anything at all has been put on this theme.
+//
+// It exists because Theme stopped being comparable the moment it carried a Copy
+// map, and `t == Theme{}` no longer builds. A caller that wants "did somebody
+// configure a theme, or should I go and find one" asks this.
+func (t Theme) IsSet() bool {
+	return t.PackCSS != "" ||
+		t.SiteTitle != "" ||
+		t.Tagline != "" ||
+		t.OGImage != "" ||
+		t.OGImageAlt != "" ||
+		len(t.Copy) > 0
 }
 
 // NavItem is one link in the site header.

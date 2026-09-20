@@ -128,37 +128,37 @@ type submitFields struct {
 // what the viewmodel.Field* constants are for: the handler records against the
 // constant and the template reads back with the same constant, so a typo is a
 // compile error rather than a message that silently never appears.
-func newSubmitFields(form SubmitForm) submitFields {
+func newSubmitFields(t Theme, form SubmitForm) submitFields {
 	return submitFields{
 		Title: formField{
 			ID:    "submit-title",
 			Name:  viewmodel.FieldTitle,
-			Label: "Title",
-			Hint:  "The name of the film. This is the only part we cannot guess.",
+			Label: t.Text(viewmodel.KeySubmitTitleLabel),
+			Hint:  t.Text(viewmodel.KeySubmitTitleHint),
 			Value: form.Title,
 			Error: form.Errors.For(viewmodel.FieldTitle),
 		},
 		Year: formField{
 			ID:    "submit-year",
 			Name:  viewmodel.FieldYear,
-			Label: "Year",
-			Hint:  "Optional, and four digits — it settles which remake you meant.",
+			Label: t.Text(viewmodel.KeySubmitYearLabel),
+			Hint:  t.Text(viewmodel.KeySubmitYearHint),
 			Value: form.Year,
 			Error: form.Errors.For(viewmodel.FieldYear),
 		},
 		TrailerURL: formField{
 			ID:    "submit-trailer-url",
 			Name:  viewmodel.FieldTrailerURL,
-			Label: "Trailer link",
-			Hint:  "Optional. A YouTube link plays right on the board; anything else becomes a link.",
+			Label: t.Text(viewmodel.KeySubmitTrailerLabel),
+			Hint:  t.Text(viewmodel.KeySubmitTrailerHint),
 			Value: form.TrailerURL,
 			Error: form.Errors.For(viewmodel.FieldTrailerURL),
 		},
 		Description: formField{
 			ID:    "submit-description",
 			Name:  viewmodel.FieldDescription,
-			Label: "Why this one",
-			Hint:  "Optional, and the bit people actually read. A sentence is plenty.",
+			Label: t.Text(viewmodel.KeySubmitDescriptionLabel),
+			Hint:  t.Text(viewmodel.KeySubmitDescriptionHint),
 			Value: form.Description,
 			Error: form.Errors.For(viewmodel.FieldDescription),
 		},
