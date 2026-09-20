@@ -299,10 +299,12 @@ func newRouter(
 	// The HTML pages and /static/. Origin is only used to build absolute URLs
 	// for link previews; nothing here reads the database.
 	web.New(web.Options{
-		Origin:     cfg.Origin,
-		Nav:        nav,
-		SignInHref: authenticator.LoginPath(),
-		Theme:      packs.Theme(pack),
+		Origin:       cfg.Origin,
+		Nav:          nav,
+		SignInHref:   authenticator.LoginPath(),
+		Themes:       packs,
+		Pack:         pack,
+		ThemePreview: adminThemePreview(sessions, queries, logger),
 	}).Routes(r)
 
 	return r
