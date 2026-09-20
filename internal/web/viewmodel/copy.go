@@ -327,7 +327,7 @@ var BaseCopy = Copy{
 	KeySubmitYearLabel:        "Year",
 	KeySubmitYearHint:         "Optional, and four digits — it settles which remake you meant.",
 	KeySubmitTrailerLabel:     "Trailer link",
-	KeySubmitTrailerHint:      "Optional. A YouTube link plays right on the board; anything else becomes a link.",
+	KeySubmitTrailerHint:      "Optional. A YouTube or Vimeo link, which plays right on the board.",
 	KeySubmitDescriptionLabel: "Why this one",
 	KeySubmitDescriptionHint:  "Optional, and the bit people actually read. A sentence is plenty.",
 

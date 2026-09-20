@@ -33,6 +33,7 @@ import (
 	"github.com/ERaith/nightofathousandpixels/internal/auth"
 	"github.com/ERaith/nightofathousandpixels/internal/store"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
+	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
 
 // Paths this package mounts. The two auth paths must match what the
@@ -70,8 +71,13 @@ type Options struct {
 	Theme  templates.Theme
 
 	// Nav is the site header's navigation, so these pages carry the same
-	// header as the others.
-	Nav []templates.NavItem
+	// header as the others; MemberNav is the whole header a member of the
+	// open season sees (ticket nap-dbu). Most pages here are rendered to
+	// somebody who is explicitly NOT a member -- the whitelist refusal, "no
+	// season is open" -- so Nav is the common case in this package and
+	// MemberNav reaches only the pages behind the gate. See viewmodel.NavFor.
+	Nav       []templates.NavItem
+	MemberNav []templates.NavItem
 
 	// SignInHref is where the header's account control sends a reader who is
 	// not signed in. Blank renders no control, which is what a build with no
@@ -211,7 +217,7 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleSignedIn(w http.ResponseWriter, r *http.Request) {
 	v := MustCurrent(r.Context())
 	s.render(w, r, http.StatusOK, "Signed in",
-		SignedInPage(s.pageFor(r, "Signed in", v.Person, v.IsAdmin()), v))
+		SignedInPage(s.pageFor(r, "Signed in", v.Person, true, v.IsAdmin()), v))
 }
 
 // RequireMember is the whitelist gate (ticket C4).
@@ -262,7 +268,7 @@ func (s *Service) RequireMember(next http.Handler) http.Handler {
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				s.render(w, r, http.StatusOK, "No season is open",
-					NoSeasonPage(s.pageFor(r, "No season is open", person, false)))
+					NoSeasonPage(s.pageFor(r, "No season is open", person, false, false)))
 				return
 			}
 			s.opts.Logger.Error("whitelist gate: load current season", slog.Any("error", err))
@@ -285,7 +291,7 @@ func (s *Service) RequireMember(next http.Handler) http.Handler {
 					slog.Int("season", int(season.Year)),
 				)
 				s.render(w, r, http.StatusOK, "You're not on the list yet",
-					NotOnTheListPage(s.pageFor(r, "You're not on the list yet", person, false),
+					NotOnTheListPage(s.pageFor(r, "You're not on the list yet", person, false, false),
 						person.Email, season.Year))
 				return
 			}
@@ -313,7 +319,7 @@ func (s *Service) RequireAdmin(next http.Handler) http.Handler {
 			// the season. 404 rather than 403 -- there is nothing for them to
 			// ask for, and naming the page only tells them it exists.
 			s.render(w, r, http.StatusNotFound, templates.NotFoundContent.Heading,
-				templates.NotFoundPage(s.pageFor(r, templates.NotFoundContent.Heading, v.Person, v.IsAdmin())))
+				templates.NotFoundPage(s.pageFor(r, templates.NotFoundContent.Heading, v.Person, true, v.IsAdmin())))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -341,10 +347,14 @@ func (s *Service) page(r *http.Request, title string) templates.Page {
 // CurrentUser stays nil for everyone else so the header cannot greet an empty
 // name.
 //
-// isAdmin is passed rather than read off a membership row because the two
-// pages that most need this -- the whitelist refusal and "no season is open"
-// -- are reached precisely when there is no membership row to read.
-func (s *Service) pageFor(r *http.Request, title string, person store.Person, isAdmin bool) templates.Page {
+// isMember and isAdmin are passed rather than read off a membership row
+// because the two pages that most need this -- the whitelist refusal and "no
+// season is open" -- are reached precisely when there is no membership row to
+// read. They are two facts rather than one for the same reason
+// board.viewer.isMember is separate from its membership row: not on the list
+// and on the list but not an admin are different answers, and the header
+// shows different links for the first of them (ticket nap-dbu).
+func (s *Service) pageFor(r *http.Request, title string, person store.Person, isMember, isAdmin bool) templates.Page {
 	p := s.page(r, title)
 	p.CurrentUser = &templates.CurrentUser{
 		DisplayName: person.DisplayName,
@@ -353,6 +363,7 @@ func (s *Service) pageFor(r *http.Request, title string, person store.Person, is
 	}
 	p.SignInHref = ""
 	p.SignOutHref = LogoutPath
+	p.Nav = viewmodel.NavFor(s.opts.Nav, s.opts.MemberNav, isMember)
 
 	return p
 }

@@ -244,6 +244,8 @@ func (s *Service) submitPage(r *http.Request, v signin.Viewer, form viewmodel.Su
 		existing = append(existing, movieCard(m, v.DisplayName()))
 	}
 
+	// Everyone who reaches this page is a member -- the whitelist gate is what
+	// they came through -- so the member header is not a decision here.
 	layout := s.page(r, "Put a movie on the board")
 	layout.CurrentUser = &viewmodel.CurrentUser{
 		DisplayName: v.Person.DisplayName,
@@ -252,6 +254,7 @@ func (s *Service) submitPage(r *http.Request, v signin.Viewer, form viewmodel.Su
 	}
 	layout.SignInHref = ""
 	layout.SignOutHref = signin.LogoutPath
+	layout.Nav = viewmodel.NavFor(s.opts.Nav, s.opts.MemberNav, true)
 
 	page := viewmodel.SubmitPage{
 		Layout:     layout,
@@ -329,7 +332,19 @@ func validate(form viewmodel.SubmitForm) (draft, viewmodel.FieldErrors) {
 			errs.Add(viewmodel.FieldTrailerURL, "That link is too long to store. Try the short form of it.")
 		case !validTrailerURL(trailer):
 			errs.Add(viewmodel.FieldTrailerURL, "A trailer link has to be a web address starting with http:// or https://.")
+		case !Embeddable(trailer):
+			// Ticket E5 (nap-0z8). Anything that is not a video the board can
+			// play used to be accepted and then sat on a card as a link
+			// nobody checked until movie night. The message names the two
+			// shapes that work rather than saying "invalid", because the
+			// mistake is almost always a channel page, a search result or a
+			// link that lost its ?v= on the way through a chat client.
+			errs.Add(viewmodel.FieldTrailerURL,
+				"That isn't a video link we can play. Use the YouTube or Vimeo address for the "+
+					"trailer itself — like https://www.youtube.com/watch?v=4sDyy2Ndm5k — or leave it blank.")
 		default:
+			// Stored exactly as typed. The embed is derived at render time;
+			// see TrailerEmbed.
 			d.trailerURL = &trailer
 		}
 	}

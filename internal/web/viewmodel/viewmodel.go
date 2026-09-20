@@ -160,6 +160,67 @@ func (u *CurrentUser) Label() string {
 	return u.Email
 }
 
+// Account is the answer to "who is reading this page", for a handler that had
+// no other reason to ask (ticket nap-bus).
+//
+// Most pages are rendered by a handler that already identified the viewer: the
+// submit form is behind the whitelist gate, the slate resolves the session
+// itself because it is public and still cares. The front page and the three
+// error pages are neither, and before this they were handed a sign-in link and
+// nothing else — so they said "Sign in" to somebody who already was, on the
+// one address that gets pasted into the group chat.
+//
+// It is a view-model type rather than one belonging to the package that fills
+// it, for the usual reason: the package that resolves a session and the
+// package that renders the header both depend on this shape and neither has to
+// depend on the other.
+//
+// The nil *Account and the nil User are the same answer — nobody is signed in
+// — so a caller can hand this straight back from a lookup that failed.
+type Account struct {
+	// User is the signed-in reader, or nil for a visitor.
+	User *CurrentUser
+
+	// IsMember is whether they are on the open season's list. It is separate
+	// from User because signed in and allowed to act are different questions:
+	// somebody in last year's group, or somebody who has not been added yet,
+	// is signed in and is not a member.
+	IsMember bool
+}
+
+// SignedIn reports whether there is anybody to greet. The nil receiver is
+// handled so a caller can ask without a guard.
+func (a *Account) SignedIn() bool {
+	return a != nil && a.User != nil
+}
+
+// Member reports whether this reader may act in the open season.
+func (a *Account) Member() bool {
+	return a.SignedIn() && a.IsMember
+}
+
+// NavFor picks the header navigation for one reader (ticket nap-dbu).
+//
+// The header used to be one constant list for everybody, which is why Submit
+// was not on it: a link that bounces a signed-out visitor into an OAuth flow
+// they did not ask for is worse than no link. That reasoning held while the
+// header could not tell who was reading it. It now can, so a member gets the
+// longer list and nobody else does.
+//
+// It takes two COMPLETE lists rather than a base plus extras, and that is the
+// point rather than a convenience. Appending to a shared nav at render time is
+// a data race with a silent outcome: the constant built at startup has spare
+// capacity exactly once, two requests append to the same backing array, and
+// one of them renders the other's header. Two lists built once at startup
+// cannot do that, and nothing here allocates.
+func NavFor(public, member []NavItem, isMember bool) []NavItem {
+	if isMember && len(member) > 0 {
+		return member
+	}
+
+	return public
+}
+
 // LayoutData is everything the site shell needs, independent of what the page
 // inside it says. Every page view model embeds one as its Layout field.
 type LayoutData struct {

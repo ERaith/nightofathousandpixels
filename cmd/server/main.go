@@ -224,23 +224,40 @@ func newRouter(
 
 	r.Method(http.MethodGet, "/healthz", health.NewHandler(pool, logger))
 
-	// The nav lists only routes that exist and that anybody may follow. The
-	// slate is on it because it is public; Submit deliberately is not, even
-	// though it now exists -- a header link that bounces a signed-out visitor
-	// into an OAuth flow they did not ask for is worse than no link, and the
-	// slate already offers "Put a movie up" to the people who can use it and
-	// "Sign in to add yours" to the people who cannot.
+	// The nav lists only routes that exist and that the reader may follow --
+	// and since nap-dbu that is two lists rather than one, because who is
+	// reading decides which routes those are.
 	//
-	// Sign in used to be a fourth entry here, and that was nap-1j5: a nav item
-	// is a constant, so the header offered it to people who were already
-	// signed in, on every page, and never once said whose session it was. It
-	// is now the header's account control instead, which is built per request
-	// from LayoutData.CurrentUser / SignInHref / SignOutHref. Every service
-	// that renders a page therefore has to be given the sign-in path
-	// separately -- hence SignInHref below on all three.
+	// Submit used to be absent from the header entirely, on the grounds that a
+	// link which bounces a signed-out visitor into an OAuth flow they did not
+	// ask for is worse than no link. That was right while a nav item was a
+	// constant and the header could not tell who was reading it. It is not
+	// right any more, and the cost of leaving it was that somebody landing on
+	// "/" -- the address that goes in the group chat -- had no way at all to
+	// reach the form: Eraith's "I can't actually submit a new movie" was this,
+	// and not a broken POST.
+	//
+	// So a member gets the longer header and nobody else does. Both lists are
+	// built here, once, and picked per request by viewmodel.NavFor; the
+	// services below never append to one, because appending to a shared slice
+	// at render time is a data race whose outcome is one request rendering
+	// another's header.
+	//
+	// Sign in is on neither list, and that was nap-1j5: a nav item is a
+	// constant, so the header offered it to people who were already signed in,
+	// on every page, and never once said whose session it was. It is now the
+	// header's account control, built per request from
+	// LayoutData.CurrentUser / SignInHref / SignOutHref. Every service that
+	// renders a page therefore has to be given the sign-in path separately --
+	// hence SignInHref below on all three.
 	nav := []templates.NavItem{
 		{Label: "Home", Href: "/"},
 		{Label: "The slate", Href: board.SlatePath},
+	}
+	memberNav := []templates.NavItem{
+		{Label: "Home", Href: "/"},
+		{Label: "The slate", Href: board.SlatePath},
+		{Label: "Submit", Href: board.SubmitPath},
 	}
 
 	queries := store.New(pool)
@@ -275,6 +292,7 @@ func newRouter(
 		Logger:     logger,
 		Origin:     cfg.Origin,
 		Nav:        nav,
+		MemberNav:  memberNav,
 		SignInHref: authenticator.LoginPath(),
 		Theme:      packs.Theme(pack),
 	})
@@ -293,15 +311,26 @@ func newRouter(
 		Logger:        logger,
 		Origin:        cfg.Origin,
 		Nav:           nav,
+		MemberNav:     memberNav,
 		Theme:         packs.Theme(pack),
 	}).Routes(r)
 
 	// The HTML pages and /static/. Origin is only used to build absolute URLs
-	// for link previews; nothing here reads the database.
+	// for link previews; nothing here reads the database itself.
+	//
+	// Reader is the exception that proves that: these four pages -- the front
+	// page and the three error pages -- are the only ones whose handler has no
+	// other way to know who is reading them, and before nap-bus they told a
+	// signed-in person to sign in. The lookup is signin's, handed over here in
+	// the same shape as the theme preview above, so internal/web still holds
+	// no session and opens no connection of its own.
 	web.New(web.Options{
 		Origin:       cfg.Origin,
 		Nav:          nav,
+		MemberNav:    memberNav,
 		SignInHref:   authenticator.LoginPath(),
+		SignOutHref:  signin.LogoutPath,
+		Reader:       accounts.ReadAccount,
 		Themes:       packs,
 		Pack:         pack,
 		ThemePreview: adminThemePreview(sessions, queries, logger),

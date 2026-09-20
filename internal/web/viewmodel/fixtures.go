@@ -237,16 +237,22 @@ func FixtureNoTrailerMovie() MovieCard {
 }
 
 // FixtureUnembeddableTrailerMovie has a trailer link that cannot go in an
-// iframe. This is the common case, not the exotic one — anything that is not a
-// YouTube watch URL ends up here — so the card must offer the link rather than
-// an empty player.
+// iframe, so the card must offer the link rather than an empty player.
+//
+// The submit form no longer accepts one of these — since E5 (nap-0z8) a
+// trailer link has to be a YouTube or Vimeo video, checked while the person is
+// still looking at the form. This case did not go away with it: the board
+// holds rows written before that check existed, an admin can edit a link, and
+// a card rendering an empty player would be a worse answer than a card
+// rendering the link. So the fixture stays, and it is now what it always
+// really was — a row from before the rule.
 func FixtureUnembeddableTrailerMovie() MovieCard {
 	return MovieCard{
 		ID:          "9a8b7c6d-5e4f-4a3b-2c1d-0f9e8d7c6b5a",
 		Title:       "Hereditary",
 		Year:        2018,
 		Description: "A family grieves. Do not read anything else about it before Friday.",
-		TrailerURL:  "https://vimeo.com/266967456",
+		TrailerURL:  "https://www.imdb.com/title/tt7784604/",
 		SubmittedBy: "Dani Okonkwo",
 	}
 }

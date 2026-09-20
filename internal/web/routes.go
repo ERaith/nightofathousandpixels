@@ -5,6 +5,12 @@
 // handlers below hold no state beyond the theme and origin they were
 // configured with. Real pages (the submit form, the slate, the archive) arrive
 // with their own tickets and plug in the same way.
+//
+// That still holds now that these pages know who is reading them (nap-bus).
+// The session and the three queries behind that answer belong to
+// internal/signin; what arrives here is Options.Reader, a function returning a
+// view model, in the same shape and for the same reason as
+// Options.ThemePreview. This package imports neither a database nor a session.
 package web
 
 import (
@@ -18,6 +24,7 @@ import (
 
 	"github.com/ERaith/nightofathousandpixels/internal/theme"
 	"github.com/ERaith/nightofathousandpixels/internal/web/templates"
+	"github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
 )
 
 // staticPrefix is the URL space the stylesheets, fonts and images live under.
@@ -77,33 +84,72 @@ type Options struct {
 	// defaultSeason.
 	Season int
 
-	// Nav is the site header's navigation. Nil means templates.DefaultNav().
+	// Nav is the site header's navigation, as a reader who is not a member of
+	// the open season sees it. Nil means templates.DefaultNav().
 	//
 	// It is a parameter rather than a constant because the links that belong
 	// in the header depend on what is mounted: a header offering pages this
 	// build does not serve would be a dead link on the team's front door.
 	Nav []templates.NavItem
 
+	// MemberNav is the whole navigation a signed-in member sees — not the
+	// extra items, the complete list (ticket nap-dbu). Nil means members see
+	// Nav like everybody else.
+	//
+	// Two complete lists rather than one plus an append: see viewmodel.NavFor,
+	// which does the picking and explains why appending at render time is a
+	// race with a silent outcome.
+	MemberNav []templates.NavItem
+
 	// SignInHref is where the header's account control sends a visitor who is
 	// not signed in. Blank renders no control at all, which is what a build
 	// with no authentication wired up wants.
 	//
-	// These pages -- the front page and the three error pages -- are the only
-	// ones on the site whose handler does not know who is reading them: this
-	// package holds no session and touches no database, by design. So the
-	// control they get is the signed-out one whether or not there is a
-	// session, which is the one thing nap-1j5's fix does not reach. Giving
-	// them the real answer means an optional-auth middleware in
-	// internal/signin, filling LayoutData.CurrentUser the way board.withViewer
-	// already does. That is a separate ticket and is deliberately not done
-	// here.
+	// It is dropped the moment Reader identifies somebody, so a signed-in
+	// person is never offered a second sign-in.
 	SignInHref string
+
+	// SignOutHref ends a session, for the account control on a page rendered
+	// to somebody Reader identified. Blank renders the name with no way out,
+	// which is only right for a build with no sign-out route.
+	SignOutHref string
+
+	// Reader answers "who is reading this page", or nil for a visitor who is
+	// not signed in (ticket nap-bus). Nil func means nobody is ever known,
+	// which is the correct behaviour for a build with no authentication and
+	// the reason this package's tests need no database.
+	//
+	// These four pages -- the front page and the three error pages -- are the
+	// only ones on the site whose handler does not otherwise know who is
+	// reading them: this package holds no session and touches no database, by
+	// design, and that has not changed. The lookup belongs to
+	// internal/signin, which already resolves a session to a person for the
+	// whitelist gate; signin.Service.ReadAccount is the same walk with the
+	// gate taken off, and cmd/server hands it over here.
+	//
+	// It is a function on Options rather than a middleware writing to the
+	// request context, which is what nap-bus proposed. Options.ThemePreview
+	// above is the same shape for the same reason, and the reason is the
+	// mounting: this package's routes include /static/ and the theme-asset
+	// handler, neither of which builds a page, and a middleware wrapped round
+	// the router would have had to be kept off both by hand. page() is called
+	// exactly once per HTML render and by nothing else, so "HTML pages only"
+	// is a property of where it is called from rather than a rule somebody has
+	// to remember when adding a route.
+	//
+	// It must not fail and must not gate. A reader it cannot identify is a
+	// signed-out reader; see ReadAccount, which is careful about it.
+	Reader func(*http.Request) *viewmodel.Account
 }
 
 // Site renders the site's pages. Build one with New and mount it with Routes.
 type Site struct {
 	opts Options
-	nav  []templates.NavItem
+
+	// nav and memberNav are the two complete header lists, resolved once here
+	// so that no request builds one. See viewmodel.NavFor.
+	nav       []templates.NavItem
+	memberNav []templates.NavItem
 }
 
 // New returns a Site with every unset option filled in.
@@ -118,7 +164,7 @@ func New(opts Options) *Site {
 		opts.Nav = templates.DefaultNav()
 	}
 
-	return &Site{opts: opts, nav: opts.Nav}
+	return &Site{opts: opts, nav: opts.Nav, memberNav: opts.MemberNav}
 }
 
 // Routes mounts the pages, the static file handler and the theme packs onto r,
@@ -148,8 +194,13 @@ func (s *Site) themed(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // page builds the shell data every page shares.
+//
+// It is the one place in this package that asks who is reading, and it is
+// called once per HTML render and from nowhere else. That is what keeps the
+// account lookup off /static/ and off the theme-asset handler: those serve
+// bytes and never build a page.
 func (s *Site) page(r *http.Request) templates.Page {
-	return templates.Page{
+	p := templates.Page{
 		Theme:      s.theme(r),
 		Origin:     s.opts.Origin,
 		Path:       r.URL.Path,
@@ -157,6 +208,33 @@ func (s *Site) page(r *http.Request) templates.Page {
 		SeasonYear: s.opts.Season,
 		SignInHref: s.opts.SignInHref,
 	}
+
+	return s.forReader(r, p)
+}
+
+// forReader fills in the account half of the shell for a reader Options.Reader
+// recognises, and leaves p alone for everybody else.
+//
+// The two halves are mutually exclusive by construction, exactly as in
+// board.withViewer and signin.pageFor: SignInHref goes the moment there is
+// somebody to greet, so nobody is offered a second sign-in, and CurrentUser
+// stays nil otherwise so the header cannot greet an empty name.
+func (s *Site) forReader(r *http.Request, p templates.Page) templates.Page {
+	if s.opts.Reader == nil {
+		return p
+	}
+
+	account := s.opts.Reader(r)
+	if !account.SignedIn() {
+		return p
+	}
+
+	p.CurrentUser = account.User
+	p.SignInHref = ""
+	p.SignOutHref = s.opts.SignOutHref
+	p.Nav = viewmodel.NavFor(s.nav, s.memberNav, account.IsMember)
+
+	return p
 }
 
 // theme picks the pack this request renders in.

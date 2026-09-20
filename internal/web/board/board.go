@@ -127,7 +127,13 @@ type Options struct {
 	// the rest of the site.
 	Origin string
 	Theme  templates.Theme
-	Nav    []templates.NavItem
+
+	// Nav is the header as a reader who is not a member of this season sees
+	// it; MemberNav is the whole header a member sees, not the extra items
+	// (ticket nap-dbu). Nil MemberNav means members see Nav like everybody
+	// else. See viewmodel.NavFor for why these are two complete lists.
+	Nav       []templates.NavItem
+	MemberNav []templates.NavItem
 
 	// Location is the timezone every date on these pages is rendered in.
 	//
@@ -325,11 +331,16 @@ func (s *Service) at(ts pgtype.Timestamptz) time.Time {
 
 // movieCard turns a movie row and its submitter's name into a card.
 //
-// TrailerEmbedURL is deliberately left blank. Deciding which links can be
-// played in place is ticket E5's (nap-0z8), and a half-version of it here
-// would be the thing E5 has to unpick. Blank is not a degraded state: the card
-// template treats "a link, no embed" as the common case and renders the link,
-// which is correct for every trailer URL that is not a YouTube watch page.
+// TrailerEmbedURL is derived here, on the way out, rather than stored (ticket
+// E5, nap-0z8). trailer_url holds what the person typed and nothing else, so
+// the embed form is a rendering decision that every page load makes again —
+// which means changing the embed host, or the rules, is a deploy rather than a
+// migration over rows that were rewritten on the way in.
+//
+// Blank is still a supported answer and the template still handles it: rows
+// written before submit-time validation existed can hold a link with no embed
+// form, and those render as a link inside the media box rather than as an
+// empty player.
 func movieCard(m store.Movie, submittedBy string) viewmodel.MovieCard {
 	card := viewmodel.MovieCard{
 		ID:          m.ID.String(),
@@ -343,6 +354,7 @@ func movieCard(m store.Movie, submittedBy string) viewmodel.MovieCard {
 	}
 	if m.TrailerUrl != nil {
 		card.TrailerURL = *m.TrailerUrl
+		card.TrailerEmbedURL = TrailerEmbed(card.TrailerURL)
 	}
 
 	return card
@@ -366,6 +378,11 @@ func (s *Service) page(r *http.Request, title string) viewmodel.LayoutData {
 // construction: CurrentUser stays nil for a visitor, so a template cannot
 // greet an empty name, and SignInHref is dropped once there is somebody to
 // greet, so a signed-in member is never offered a second sign-in.
+//
+// The navigation is picked here too, from the same one fact, so that the
+// header a member sees on the slate is the header they see on the front page
+// (ticket nap-dbu). A Submit link that appeared on one page and not the next
+// would read as the site losing track of who you are.
 func (s *Service) withViewer(p viewmodel.LayoutData, v *viewer) viewmodel.LayoutData {
 	if v == nil {
 		return p
@@ -378,6 +395,7 @@ func (s *Service) withViewer(p viewmodel.LayoutData, v *viewer) viewmodel.Layout
 	}
 	p.SignInHref = ""
 	p.SignOutHref = signin.LogoutPath
+	p.Nav = viewmodel.NavFor(s.opts.Nav, s.opts.MemberNav, v.isMember)
 
 	return p
 }
