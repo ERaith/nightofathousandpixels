@@ -1,3 +1,5 @@
+//go:build integration
+
 package board
 
 import (
@@ -34,7 +36,7 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping live database test")
+		t.Fatal("TEST_DATABASE_URL is not set. Under -tags=integration the database is the point,\nso an absent DSN is a broken invocation rather than a reason to report ok.\nRun `make test-integration`, which starts and migrates a throwaway database.")
 	}
 
 	pool, err := pgxpool.New(context.Background(), dsn)
