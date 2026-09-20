@@ -15,7 +15,40 @@ type Querier interface {
 	// withdrawing a film and submitting a different one would permanently burn a
 	// slot.
 	CountPersonMoviesInSeason(ctx context.Context, arg CountPersonMoviesInSeasonParams) (int64, error)
+	// Append-only. Nothing here reads the log yet: the admin feed is its own
+	// ticket. What exists is the write, because an action that changes a season or
+	// takes a film off the board has to leave a trace at the moment it happens --
+	// a logger writes to stdout and stdout is rotated away, and migration 00007
+	// exists precisely so these events outlive the rows they describe.
+	// actor is text and deliberately not a foreign key (see migration 00007): it
+	// records the email of whoever did it, or 'system' when nobody did. target is
+	// a free string rather than a uuid column for the same reason -- it has to
+	// keep naming a row that may later be gone.
+	//
+	// payload is jsonb and arrives as raw bytes, so a caller marshals its own
+	// struct. That keeps the shape of a payload next to the action that writes it
+	// instead of in a union type here that every new action widens.
+	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) (AuditLog, error)
 	CreateMovie(ctx context.Context, arg CreateMovieParams) (Movie, error)
+	// The production season-creation path (ticket D3). Production is never seeded:
+	// an admin types a year, a name and two dates into a form, and this is what
+	// that form runs.
+	//
+	// state is a parameter rather than a default because the admin screen decides
+	// it: creating a season IS the act of opening it, so the form posts
+	// 'submitting'. 'draft' stays reachable for a season being prepared ahead of
+	// time, which is what season.state's own DEFAULT would have given -- but a
+	// default here would mean the ordinary case had to remember to override it,
+	// and the ordinary case is the one that must not need remembering.
+	//
+	// No locked_at parameter, and none is possible: season_locked_has_timestamp
+	// says a season is locked if and only if it records when, so a season created
+	// directly into 'locked' would be an archive with no ballots in it. The CHECK
+	// refuses it, which is the right answer.
+	//
+	// year is UNIQUE (season_year_key), so a second attempt for the same year
+	// comes back as SQLSTATE 23505 and the handler turns it into a sentence.
+	CreateSeason(ctx context.Context, arg CreateSeasonParams) (Season, error)
 	// Removing someone from a season's whitelist. This cascades to their ballot
 	// for that season (ballot_entry references season_member), but not to their
 	// submissions -- movie.submitted_by is ON DELETE RESTRICT against person and
@@ -145,6 +178,19 @@ type Querier interface {
 	// GetPersonByGoogleSub lookup would be read-only and an email change would
 	// never be recorded.
 	UpdatePersonIdentity(ctx context.Context, arg UpdatePersonIdentityParams) (Person, error)
+	// Re-dating a season after it exists, which is the half of ticket D3 that gets
+	// used more than once: the submission deadline slips every year.
+	//
+	// Deliberately NOT a superset of UpdateSeasonState. state and locked_at have to
+	// move together and that query derives locked_at so no caller can construct a
+	// combination the CHECK refuses; folding the two together here would hand every
+	// date edit the ability to lock a season by accident.
+	//
+	// year is not updatable either. It is the season's identity -- the UNIQUE key
+	// the archive is browsed by -- and "the 2026 season is now 2027" is a different
+	// operation from "the 2026 deadline moved", with different consequences for
+	// every link already pasted into the group chat.
+	UpdateSeasonDetails(ctx context.Context, arg UpdateSeasonDetailsParams) (Season, error)
 	// state and locked_at have to move together: the season_locked_has_timestamp
 	// CHECK says a season is locked if and only if it records when it locked.
 	// Deriving locked_at here means no caller can construct a state change the

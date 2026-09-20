@@ -41,6 +41,12 @@ type fakeStore struct {
 
 	slate []store.ListVisibleMoviesWithSubmitterForSeasonRow
 	mine  []store.Movie
+
+	// movies backs GetMovie, which the edit page's read path uses to find the
+	// film named in the URL. It is keyed by id rather than derived from mine,
+	// because the interesting cases are the ones mine would never contain:
+	// somebody else's film, and a film from another season.
+	movies map[uuid.UUID]store.Movie
 }
 
 func (f *fakeStore) GetCurrentSeason(context.Context) (store.Season, error) {
@@ -80,6 +86,15 @@ func (f *fakeStore) CountPersonMoviesInSeason(_ context.Context, arg store.Count
 
 func (f *fakeStore) ListPersonMoviesForSeason(context.Context, store.ListPersonMoviesForSeasonParams) ([]store.Movie, error) {
 	return f.mine, nil
+}
+
+func (f *fakeStore) GetMovie(_ context.Context, id uuid.UUID) (store.Movie, error) {
+	m, ok := f.movies[id]
+	if !ok {
+		return store.Movie{}, pgx.ErrNoRows
+	}
+
+	return m, nil
 }
 
 func (f *fakeStore) ListVisibleMoviesWithSubmitterForSeason(context.Context, uuid.UUID) ([]store.ListVisibleMoviesWithSubmitterForSeasonRow, error) {

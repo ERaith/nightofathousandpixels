@@ -125,6 +125,68 @@ Every page under the season's theme pack. `?theme=portal`, `?theme=elvira` or
 
 ---
 
+## Starting the first season
+
+**Production is never seeded.** An admin creates the slate by hand at
+**`/admin/seasons`** — year, display name, the two deadlines and the default
+films-per-person. That is the only way a season comes into existence on a
+deployed instance.
+
+Which runs straight into a chicken-and-egg problem, and it is worth
+understanding before October rather than during it:
+
+> Admin is **per season** — `season_member.is_admin`, deliberately, so that
+> running the 2025 season does not hand anybody the keys to 2026. On a fresh
+> database there is no season, so there is no membership row, so **nobody is an
+> admin**, so nobody can create the season that would make somebody one.
+
+### The answer: `BOOTSTRAP_ADMIN_EMAILS`
+
+One environment variable, a comma-separated list of addresses:
+
+```sh
+BOOTSTRAP_ADMIN_EMAILS=you@example.com,someone-else@example.com
+```
+
+Anybody on that list reaches `/admin/seasons` regardless of any membership
+row. Sign in with Google as normal — there is still no password and no bypass
+— and the admin screens are open.
+
+Two things keep this a bootstrap rather than a back door:
+
+- **It grants exactly the admin screens.** It is not a global admin flag. It
+  does not touch the whitelist gate, and it cannot put a film on the board or
+  cast a ballot; those still need a `season_member` row like everybody else's.
+- **It extinguishes itself.** Whoever creates a season is written into that
+  season as an admin *in the same transaction*. So after the first season
+  exists you can delete the variable and the ordinary per-season rule is the
+  only one left. The server logs a line at every boot while it is still set,
+  and the seasons page says so on the page.
+
+Addresses are matched case-insensitively against `person.email_normalized`, so
+`You@Example.com` and `you@example.com` are the same person.
+
+### Then
+
+1. Sign in as a bootstrap admin, go to **`/admin/seasons`** and press
+   **Start a new season**.
+2. Fill in the year, the name, **when submissions close** and **when voting
+   closes**. A new season opens in `submitting` — creating it *is* opening it —
+   and `draft` is there for a season prepared ahead of time.
+3. Add everybody else to the whitelist.
+4. Remove `BOOTSTRAP_ADMIN_EMAILS` and restart.
+
+**There is no voting-start date and there must not be one.** Ranking opens on
+a **count**, not a phase: people may vote as soon as **three films** are up,
+concurrently with submissions still coming in (`nap-h3l`). Voting *end* is a
+deadline an admin sets; voting *start* is not.
+
+A locked season is the archive and cannot be edited or re-dated. Migration
+`00008` enforces that with a trigger, and a deliberate admin unlock is its own
+ticket (`nap-hh3`).
+
+---
+
 ## The commands that matter
 
 ```bash
@@ -198,13 +260,19 @@ Be aware of these before you lose an hour to one. Each has an open ticket.
 - **`make templ-generate` does nothing inside a git worktree.** It reports
   `updates=0` and exits 0. `make build` depends on it, so a `.templ` edit can silently
   fail to take effect. Fine in a normal clone. Fixed on this branch; verify. → `nap-hil`
+- **Nothing links to the admin screens.** They work and they are gated, but the
+  site header has no "Admin" control, so an admin reaches them by typing
+  `/admin`. The header is somebody else's file this week; the link belongs in
+  the account control, guarded by `CurrentUser.IsAdmin`.
 
 ---
 
 ## What exists and what doesn't
 
-**Works:** sign-in with a per-season whitelist, submitting films, the 2-per-person cap,
-the slate, validation, theme packs, the schema and its integrity guards.
+**Works:** sign-in with a per-season whitelist, submitting films, editing and
+withdrawing your own while the window is open, the 2-per-person cap, the slate,
+validation, the admin screens that create and re-date a season, theme packs, the
+schema and its integrity guards.
 
 **Doesn't exist yet:** ranked voting and the instant-runoff tally. That's the whole
 second half. The Gherkin scenarios are written; the implementation isn't.
@@ -225,7 +293,9 @@ internal/
   signin/              sessions and the whitelist gate
   store/               sqlc queries + goose migrations
   web/                 routes, handlers, templates, view models
-  web/board/           the slate and submit handlers
+  web/board/           the slate, submit, and edit/withdraw handlers
+  web/admin/           creating and re-dating a season (its own gate; see below)
+  audit/               one function over audit_log, for the two packages that write it
 static/css/base.css    layout and the accessibility floor
 themes/                portal/ and elvira/ — colour, type and copy only
 e2e/                   Playwright, driving a real browser against a real stack

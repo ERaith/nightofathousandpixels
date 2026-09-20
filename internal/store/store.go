@@ -45,7 +45,9 @@ type (
 // renamed or removed fails this file's compile rather than rotting silently.
 type (
 	CountPersonMoviesInSeasonParams = sqlc.CountPersonMoviesInSeasonParams
+	CreateAuditLogParams            = sqlc.CreateAuditLogParams
 	CreateMovieParams               = sqlc.CreateMovieParams
+	CreateSeasonParams              = sqlc.CreateSeasonParams
 	DeleteSeasonMemberParams        = sqlc.DeleteSeasonMemberParams
 	GetEffectiveSubmitLimitParams   = sqlc.GetEffectiveSubmitLimitParams
 	GetSeasonMemberParams           = sqlc.GetSeasonMemberParams
@@ -60,6 +62,7 @@ type (
 	SetMovieHiddenParams       = sqlc.SetMovieHiddenParams
 	UpdateMovieParams          = sqlc.UpdateMovieParams
 	UpdatePersonIdentityParams = sqlc.UpdatePersonIdentityParams
+	UpdateSeasonDetailsParams  = sqlc.UpdateSeasonDetailsParams
 	UpdateSeasonStateParams    = sqlc.UpdateSeasonStateParams
 	UpdateSeasonWindowsParams  = sqlc.UpdateSeasonWindowsParams
 	UpsertPersonOnSignInParams = sqlc.UpsertPersonOnSignInParams

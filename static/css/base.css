@@ -1334,6 +1334,22 @@ textarea:hover {
   border-color: var(--_muted);
 }
 
+/* A control that is there to be read and not changed. It has to LOOK
+   different, not merely refuse input: a disabled field that is
+   indistinguishable from an enabled one is one people tab at, type into and
+   only then discover. The season form's year is the case this exists for.
+
+   Not-allowed rather than default for the cursor, and the opacity is on the
+   low side of what browsers do by default, because the text still has to
+   clear the contrast floor -- this is why it is 0.7 and not 0.5. */
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--_surface) 80%, var(--_bg));
+}
+
 /* Invalid styling only after the user has had a go at the field. */
 input:user-invalid,
 select:user-invalid,

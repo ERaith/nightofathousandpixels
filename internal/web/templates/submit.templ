@@ -19,18 +19,35 @@ templ SubmitPage(p Submit) {
 			if label := p.Season.Label(); label != "" {
 				<p class="badge">{ label }</p>
 			}
-			<h1>{ p.Layout.Text(viewmodel.KeySubmitHeading) }</h1>
+			// The heading and the lead are copy KEYS rather than fixed
+			// ones, because the same page is also the edit form (ticket
+			// E3): HeadingCopyKey answers the submit wording unless a
+			// handler asked for the other. Neither branch can supply words
+			// of its own -- a pack still owns both sentences.
+			<h1>{ p.Layout.Text(p.HeadingCopyKey()) }</h1>
 			// The lead is instructions for filling the form in, so it goes
 			// when the form does. A page that explains how to do a thing and
 			// then says you cannot do it is a page that was not read back.
 			if p.CanSubmit && p.Action != "" {
-				<p class="lead">{ p.Layout.Text(viewmodel.KeySubmitLead) }</p>
+				<p class="lead">{ p.Layout.Text(p.LeadCopyKey()) }</p>
 			}
 		</div>
 		if p.CanSubmit && p.Action != "" {
 			@SubmitFormSection(p)
 		} else {
 			@SubmitBlockedSection(p)
+		}
+		// The withdraw form sits BELOW the edit form and outside it, which
+		// is the whole reason it is a second <form> rather than a second
+		// button: one form cannot post to two places, and two submit buttons
+		// in one form means the Enter key in the title field decides which
+		// one fires. On this page the wrong one takes a film off the board.
+		//
+		// It is last on the page for the same reason it is styled quietly:
+		// the common visit here is an edit, and the destructive control
+		// should not be the thing the thumb lands on first at 320px.
+		if p.CanWithdraw() {
+			@SubmitWithdrawSection(p)
 		}
 		if len(p.Existing) > 0 {
 			<section>
@@ -130,7 +147,7 @@ templ SubmitFormSection(p Submit) {
 				>{ fields.Description.Value }</textarea>
 			}
 			<div class="form-actions">
-				<button class="btn btn--primary" type="submit">{ p.Layout.Text(viewmodel.KeySubmitButton) }</button>
+				<button class="btn btn--primary" type="submit">{ p.Layout.Text(p.ButtonCopyKey()) }</button>
 				if p.CancelHref != "" {
 					<a class="btn btn--ghost" href={ p.CancelHref }>{ p.Layout.Text(viewmodel.KeySubmitCancel) }</a>
 				}
@@ -213,4 +230,25 @@ templ formRow(f formField) {
 			<p class="field__error mb-0" id={ f.ErrorID() }>{ f.Error }</p>
 		}
 	</div>
+}
+
+// SubmitWithdrawSection is the "take it back off the board" control on the
+// edit page.
+//
+// It says out loud what withdrawing actually does, because the mental model it
+// replaces is "delete" and that model is wrong in a way people care about: the
+// film leaves the slate, the pick comes back, and anybody who already ranked
+// it keeps their ballot. None of that is guessable from a button.
+//
+// The heading is an h2 and the section has its own landmark, so somebody
+// navigating by heading finds it rather than discovering it by tabbing past
+// the save button.
+templ SubmitWithdrawSection(p Submit) {
+	<section class="measure" id="withdraw" aria-labelledby="withdraw-heading">
+		<h2 id="withdraw-heading">{ p.Layout.Text(viewmodel.KeyWithdrawHeading) }</h2>
+		<p>{ p.Layout.Text(viewmodel.KeyWithdrawBody) }</p>
+		<form method="post" action={ p.WithdrawAction }>
+			<button class="btn btn--danger" type="submit">{ p.Layout.Text(viewmodel.KeyWithdrawButton) }</button>
+		</form>
+	</section>
 }

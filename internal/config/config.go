@@ -54,6 +54,57 @@ type Config struct {
 	// internal/web/middleware.ClientIPPolicy for what each value means and why
 	// this is configuration rather than a constant.
 	TrustedProxyCount int
+
+	// BootstrapAdminEmails is the answer to the chicken-and-egg problem in
+	// admin (ticket D3, nap-06p).
+	//
+	// Admin is per season: season_member.is_admin. So before the first season
+	// exists there is no membership row, and therefore nobody is an admin, and
+	// therefore nobody can create the season that would make somebody one. A
+	// site with no seed -- which production deliberately is -- cannot start its
+	// first year at all.
+	//
+	// These addresses are admins of the admin screens regardless of any
+	// membership row. That is the whole of the privilege: they can create a
+	// season and re-date one. Whoever creates a season is written into it as
+	// an admin in the same transaction, so this variable is needed exactly
+	// once, in the life of the deployment, and can then be removed.
+	//
+	// Empty is the normal steady state and is not an error. It is a list
+	// rather than one address because the person setting the variable and the
+	// person who will run the season are not always the same, and a list of
+	// two costs nothing.
+	//
+	// The values are normalized with signin.NormalizeEmail's policy -- lower
+	// case and trimmed -- because they are compared against
+	// person.email_normalized, and a capital letter in an environment variable
+	// silently granting nobody anything is exactly the failure this is meant
+	// to avoid.
+	BootstrapAdminEmails []string
+}
+
+// IsBootstrapAdmin reports whether a normalized email address is on the
+// bootstrap list.
+//
+// It takes an already-normalized address rather than normalizing here, so that
+// there is one normalization policy in the application and this is not a
+// second one that could drift from it. The caller passes
+// person.email_normalized, which is the column the policy wrote.
+//
+// A blank address is never a match, even if the list somehow contains one:
+// person.email_normalized has a not-blank CHECK, so a blank here means a
+// caller with no person, and that must not be an admin.
+func (c *Config) IsBootstrapAdmin(emailNormalized string) bool {
+	if emailNormalized == "" {
+		return false
+	}
+	for _, e := range c.BootstrapAdminEmails {
+		if e == emailNormalized {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Load reads and validates the configuration from the environment. Every
@@ -99,6 +150,8 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.TrustedProxyCount = proxies
+
+	cfg.BootstrapAdminEmails = loadBootstrapAdminEmails()
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -191,4 +244,35 @@ func loadTrustedProxyCount() (int, error) {
 		return 0, fmt.Errorf("config: TRUSTED_PROXY_COUNT must be between 0 and %d, got %d", maxTrustedProxyCount, n)
 	}
 	return n, nil
+}
+
+// loadBootstrapAdminEmails reads BOOTSTRAP_ADMIN_EMAILS, a comma-separated
+// list.
+//
+// Unset is the normal case and yields nil rather than an error: once a season
+// exists, admin comes from season_member and this variable has nothing left to
+// do. Blank entries and stray whitespace are dropped rather than refused, so
+// that a trailing comma in a deployment's environment does not stop the
+// process from starting -- the failure mode of a typo here is that somebody is
+// not an admin, which they can see, not that the site is down, which they
+// cannot fix.
+//
+// The normalization matches signin.NormalizeEmail exactly (lower case, trim).
+// It is repeated rather than imported because internal/config must not depend
+// on a package that depends on the database; the two are held together by
+// TestBootstrapAdminNormalizationMatchesSignIn.
+func loadBootstrapAdminEmails() []string {
+	raw := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_EMAILS"))
+	if raw == "" {
+		return nil
+	}
+
+	var emails []string
+	for _, part := range strings.Split(raw, ",") {
+		if e := strings.ToLower(strings.TrimSpace(part)); e != "" {
+			emails = append(emails, e)
+		}
+	}
+
+	return emails
 }

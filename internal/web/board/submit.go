@@ -241,7 +241,16 @@ func (s *Service) submitPage(r *http.Request, v signin.Viewer, form viewmodel.Su
 	for _, m := range mine {
 		// The submitter is the person reading the page, so the name is already
 		// in hand and there is nothing to join to.
-		existing = append(existing, movieCard(m, v.DisplayName()))
+		card := movieCard(m, v.DisplayName())
+		// The way back into a film you already put up (ticket E3). It is set
+		// only while the window is open, because the page must not offer a
+		// control that the write would refuse -- and ListPersonMoviesForSeason
+		// has already excluded the hidden rows, so every card here is one
+		// there is still something to do with.
+		if v.Season.State == stateSubmitting {
+			card.EditHref = EditHref(m.ID)
+		}
+		existing = append(existing, card)
 	}
 
 	// Everyone who reaches this page is a member -- the whitelist gate is what

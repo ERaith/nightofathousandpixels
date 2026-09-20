@@ -1,0 +1,318 @@
+package admin
+
+import "github.com/ERaith/nightofathousandpixels/internal/web/templates"
+import "github.com/ERaith/nightofathousandpixels/internal/web/viewmodel"
+
+// The admin screens' markup.
+//
+// They sit in this package rather than in internal/web/templates because they
+// are not the site: nobody lands on them from the group chat, no theme pack
+// writes their copy, and the words on them are instructions to one person
+// doing an administrative job once a year. Everything shared -- the shell, the
+// error pages, base.css's components -- comes from templates, so they still
+// look like the rest of the site and inherit its accessibility floor.
+//
+// They take viewmodel structs only. No store row reaches this file, which is
+// the same seam internal/web/board keeps.
+
+// SeasonListPage is every season an admin can see, drafts included.
+//
+// The empty state is the one that matters most and is the one nobody would
+// think to design: production is never seeded, so a brand new deployment lands
+// here with nothing, and this page is the only thing standing between an admin
+// and a site that cannot start its first year.
+templ SeasonListPage(p viewmodel.AdminSeasonsPage) {
+	@templates.Layout(p.Layout) {
+		<div class="page-head measure">
+			<h1>Seasons</h1>
+			<p class="lead">
+				Every year, including the ones nobody can see yet. The season at the
+				top is the one the site is showing.
+			</p>
+		</div>
+		// Said out loud rather than left as a mystery. Somebody who set
+		// BOOTSTRAP_ADMIN_EMAILS months ago has forgotten it, and "why can I
+		// see this" deserves an answer on the page -- particularly because the
+		// answer comes with an action that makes the variable unnecessary.
+		if p.IsBootstrap {
+			<div class="notice measure">
+				<div>
+					<p class="mt-0">
+						<strong>You are here on the bootstrap admin list.</strong>
+					</p>
+					<p class="mb-0">
+						BOOTSTRAP_ADMIN_EMAILS names your address, so these screens are open
+						to you whether or not a season exists. Whoever creates a season is
+						written into it as an admin, so once you have opened one the variable
+						can be removed.
+					</p>
+				</div>
+			</div>
+		}
+		<section class="measure stack">
+			if p.HasSeasons() {
+				<ul class="card-grid">
+					for _, season := range p.Seasons {
+						@SeasonListItem(season)
+					}
+				</ul>
+			} else {
+				<div class="panel stack">
+					<h2 class="mt-0">No seasons yet</h2>
+					<p>
+						Nothing has been created on this deployment. Production is never
+						seeded — the first season is made by hand, here, and it is what
+						turns the front page from a placeholder into a board.
+					</p>
+					<p class="mb-0">
+						You need a year, a name, and the two deadlines.
+					</p>
+				</div>
+			}
+			<div class="cluster">
+				<a class="btn btn--primary" href={ p.NewHref }>Start a new season</a>
+			</div>
+		</section>
+	}
+}
+
+// SeasonListItem is one season on the list.
+//
+// The two dates are printed whether or not they are set, and "Not set" is
+// spelled out rather than left blank: a blank cell reads as a rendering bug,
+// and an unscheduled deadline is a real state the schema allows.
+templ SeasonListItem(s viewmodel.AdminSeasonRow) {
+	<li class="card">
+		<h2 class="card__title">{ s.Label() }</h2>
+		<p class="card__meta">
+			<span class="badge">{ s.State.Label() }</span>
+			if s.IsCurrent {
+				<span class="badge badge--accent">Showing on the site</span>
+			}
+		</p>
+		<dl class="mb-0">
+			<dt>Submissions close</dt>
+			<dd>
+				if s.SubmitClosesLabel != "" {
+					{ s.SubmitClosesLabel }
+				} else {
+					Not set
+				}
+			</dd>
+			<dt>Voting closes</dt>
+			<dd>
+				if s.VoteClosesLabel != "" {
+					{ s.VoteClosesLabel }
+				} else {
+					Not set
+				}
+			</dd>
+		</dl>
+		<div class="card__footer">
+			<span class="card__by">{ s.YearLabel() }</span>
+			if s.CanEdit() {
+				<a class="btn btn--quiet" href={ s.EditHref }>
+					Edit dates
+					<span class="visually-hidden">{ " for " + s.Label() }</span>
+				</a>
+			}
+		</div>
+	</li>
+}
+
+// SeasonFormPage is the create screen and the re-date screen.
+//
+// One template for both, because they are the same seven controls and two of
+// them are disabled on one of the two. Two templates would be two places for
+// the voting-start field nobody should ever add.
+//
+// Native validation is left on — base.css styles :user-invalid, which only
+// fires once somebody has had a go at a field — so the browser's check is the
+// first line and the server's is the one that counts. Nothing here depends on
+// JavaScript.
+templ SeasonFormPage(p viewmodel.AdminSeasonFormPage) {
+	{{ fields := newSeasonFields(p) }}
+	@templates.Layout(p.Layout) {
+		<div class="page-head measure">
+			<h1>{ p.Heading() }</h1>
+			<p class="lead">{ p.Lead() }</p>
+		</div>
+		<div class="measure stack">
+			// The summary is an alert about the form and sits OUTSIDE it,
+			// above, where it reads first.
+			@SeasonErrorSummary(fields)
+			<form class="panel" method="post" action={ p.Action }>
+				@adminRow(fields.Year) {
+					// Text rather than number: the view model keeps what was
+					// typed, so "twenty twenty seven" has to have somewhere to
+					// go on the way back. inputmode gets the digits keyboard on
+					// a phone without type="number"'s spinner.
+					<input
+						type="text"
+						id={ fields.Year.ID }
+						name={ fields.Year.Name }
+						value={ fields.Year.Value }
+						inputmode="numeric"
+						pattern="[0-9]{4}"
+						autocomplete="off"
+						required?={ !fields.Year.Locked }
+						disabled?={ fields.Year.Locked }
+						aria-invalid={ fields.Year.AriaInvalid() }
+						aria-describedby={ fields.Year.DescribedBy() }
+					/>
+				}
+				@adminRow(fields.Name) {
+					<input
+						type="text"
+						id={ fields.Name.ID }
+						name={ fields.Name.Name }
+						value={ fields.Name.Value }
+						required
+						autocomplete="off"
+						aria-invalid={ fields.Name.AriaInvalid() }
+						aria-describedby={ fields.Name.DescribedBy() }
+					/>
+				}
+				@adminRow(fields.SubmitOpens) {
+					<input
+						type="datetime-local"
+						id={ fields.SubmitOpens.ID }
+						name={ fields.SubmitOpens.Name }
+						value={ fields.SubmitOpens.Value }
+						aria-invalid={ fields.SubmitOpens.AriaInvalid() }
+						aria-describedby={ fields.SubmitOpens.DescribedBy() }
+					/>
+				}
+				@adminRow(fields.SubmitCloses) {
+					<input
+						type="datetime-local"
+						id={ fields.SubmitCloses.ID }
+						name={ fields.SubmitCloses.Name }
+						value={ fields.SubmitCloses.Value }
+						required
+						aria-invalid={ fields.SubmitCloses.AriaInvalid() }
+						aria-describedby={ fields.SubmitCloses.DescribedBy() }
+					/>
+				}
+				@adminRow(fields.VoteCloses) {
+					<input
+						type="datetime-local"
+						id={ fields.VoteCloses.ID }
+						name={ fields.VoteCloses.Name }
+						value={ fields.VoteCloses.Value }
+						required
+						aria-invalid={ fields.VoteCloses.AriaInvalid() }
+						aria-describedby={ fields.VoteCloses.DescribedBy() }
+					/>
+				}
+				@adminRow(fields.SubmitLimit) {
+					<input
+						type="text"
+						id={ fields.SubmitLimit.ID }
+						name={ fields.SubmitLimit.Name }
+						value={ fields.SubmitLimit.Value }
+						inputmode="numeric"
+						pattern="[0-9]{1,2}"
+						autocomplete="off"
+						required
+						aria-invalid={ fields.SubmitLimit.AriaInvalid() }
+						aria-describedby={ fields.SubmitLimit.DescribedBy() }
+					/>
+				}
+				@SeasonStateChoice(fields.State)
+				<div class="form-actions">
+					<button class="btn btn--primary" type="submit">{ p.SubmitLabel() }</button>
+					if p.CancelHref != "" {
+						<a class="btn btn--ghost" href={ p.CancelHref }>Cancel</a>
+					}
+				</div>
+			</form>
+		</div>
+	}
+}
+
+// SeasonStateChoice is the open-now / draft pair.
+//
+// A fieldset with a legend rather than a label, because the thing being
+// labelled is the group and not any one radio — which is what a screen reader
+// needs in order to announce "Open it now?" once and then each option under
+// it. Radios rather than a checkbox: "draft" is a real choice with its own
+// meaning, not the absence of "open".
+templ SeasonStateChoice(f field) {
+	<fieldset class="field" aria-describedby={ f.DescribedBy() }>
+		<legend>{ f.Label }</legend>
+		if f.Hint != "" {
+			<p class="field__hint mb-0" id={ f.HintID() }>{ f.Hint }</p>
+		}
+		<label class="check">
+			<input
+				type="radio"
+				id={ f.ID }
+				name={ f.Name }
+				value={ stateSubmitting }
+				checked?={ stateChecked(f, stateSubmitting) }
+				disabled?={ f.Locked }
+			/>
+			{ " Open it now — people can submit straight away" }
+		</label>
+		<label class="check">
+			<input
+				type="radio"
+				id={ f.ID + "-draft" }
+				name={ f.Name }
+				value={ stateDraft }
+				checked?={ stateChecked(f, stateDraft) }
+				disabled?={ f.Locked }
+			/>
+			{ " Keep it as a draft — nobody else sees it yet" }
+		</label>
+		if f.Invalid() {
+			<p class="field__error mb-0" id={ f.ErrorID() }>{ f.Error }</p>
+		}
+	</fieldset>
+}
+
+// SeasonErrorSummary is the list of what needs fixing, above the form.
+//
+// It is what makes a rejected form recoverable for somebody who cannot see the
+// red (WCAG 3.3.1): each entry names its field and links straight to the
+// control, and the list reads down the form in the form's own order. It
+// renders nothing at all when the form is clean rather than an empty container,
+// which would otherwise take a gap in the .stack for saying nothing.
+templ SeasonErrorSummary(fields seasonFields) {
+	if bad := fields.Invalid(); len(bad) > 0 {
+		<div class="notice notice--error" id="season-errors" tabindex="-1" role="alert">
+			<div>
+				<p class="mt-0"><strong>There is something to fix before this can be saved.</strong></p>
+				<ul class="mb-0">
+					for _, one := range bad {
+						<li>
+							<a href={ one.ErrorHref() }>{ one.Label }</a>
+							{ " — " + one.Error }
+						</li>
+					}
+				</ul>
+			</div>
+		</div>
+	}
+}
+
+// adminRow wraps one control in its label, its hint and its error message.
+//
+// The control is the caller's, passed as children, because a year and a
+// datetime are not the same input. What is shared is the part that has to be
+// identical every time: the label pointing at the control, and the ids the
+// control points back at. Order in the DOM is order on screen — .field is a
+// column flexbox — so the message appears under the control it is about.
+templ adminRow(f field) {
+	<div class="field">
+		<label for={ f.ID }>{ f.Label }</label>
+		if f.Hint != "" {
+			<p class="field__hint mb-0" id={ f.HintID() }>{ f.Hint }</p>
+		}
+		{ children... }
+		if f.Invalid() {
+			<p class="field__error mb-0" id={ f.ErrorID() }>{ f.Error }</p>
+		}
+	</div>
+}
