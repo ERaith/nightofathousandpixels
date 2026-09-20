@@ -67,6 +67,30 @@ type MovieCard struct {
 	// card. The handler sets it; there is no id comparison for a template to
 	// get wrong.
 	IsWinner bool
+
+	// EditHref is where the submitter goes to change or withdraw this film
+	// (ticket E3). Blank renders no control, which is the case on every card
+	// the public slate shows and on every card belonging to somebody else.
+	//
+	// It is a handler's answer, not a template's: "is this mine, and is the
+	// window open" is decided once, from the season row and the session, and
+	// arrives here as a link or as nothing. A template that worked it out from
+	// an id comparison would be a second implementation of an authorisation
+	// rule, and the server check would be the only one of the two anybody
+	// tested.
+	//
+	// The control it renders is a LINK to a page, deliberately, and not a
+	// withdraw button on the card itself. Withdrawing is a write and wants a
+	// POST; a POST button sitting in a list of cards is one mis-tap away from
+	// taking a film off the board, on the page where the films are closest
+	// together.
+	EditHref string
+}
+
+// HasOwnerControls reports whether this card offers its submitter a way to
+// change it.
+func (m MovieCard) HasOwnerControls() bool {
+	return m.EditHref != ""
 }
 
 // HasYear reports whether the release year is known.

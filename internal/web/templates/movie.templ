@@ -126,8 +126,20 @@ templ MovieCardItem(t Theme, m MovieCard) {
 				</div>
 			}
 		</div>
+		// The footer is a rule, the credit, and room for one control. Today
+		// that control is the submitter's own way back into the film (ticket
+		// E3); the vote control the 2025 card had lands in the same slot.
+		//
+		// A link and not a form: see MovieCard.EditHref for why a withdraw
+		// button does not belong in a grid of cards.
 		<div class="card__footer">
 			<span class="card__by">{ t.Text(viewmodel.KeyMovieSubmittedBy, viewmodel.PlaceholderName, m.SubmitterLabel()) }</span>
+			if m.HasOwnerControls() {
+				<a class="btn btn--quiet" href={ m.EditHref }>
+					{ t.Text(viewmodel.KeyMovieEditCTA) }
+					<span class="visually-hidden">{ " — " + m.Title }</span>
+				</a>
+			}
 		</div>
 	</li>
 }

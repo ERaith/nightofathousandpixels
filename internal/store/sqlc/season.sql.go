@@ -12,6 +12,82 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createSeason = `-- name: CreateSeason :one
+INSERT INTO season (
+    year,
+    name,
+    state,
+    submit_opens_at,
+    vote_opens_at,
+    vote_closes_at,
+    default_submit_limit
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
+)
+RETURNING id, year, name, theme_pack, submit_opens_at, vote_opens_at, vote_closes_at, locked_at, state, default_submit_limit, created_at
+`
+
+type CreateSeasonParams struct {
+	Year               int32
+	Name               string
+	State              string
+	SubmitOpensAt      pgtype.Timestamptz
+	VoteOpensAt        pgtype.Timestamptz
+	VoteClosesAt       pgtype.Timestamptz
+	DefaultSubmitLimit int32
+}
+
+// The production season-creation path (ticket D3). Production is never seeded:
+// an admin types a year, a name and two dates into a form, and this is what
+// that form runs.
+//
+// state is a parameter rather than a default because the admin screen decides
+// it: creating a season IS the act of opening it, so the form posts
+// 'submitting'. 'draft' stays reachable for a season being prepared ahead of
+// time, which is what season.state's own DEFAULT would have given -- but a
+// default here would mean the ordinary case had to remember to override it,
+// and the ordinary case is the one that must not need remembering.
+//
+// No locked_at parameter, and none is possible: season_locked_has_timestamp
+// says a season is locked if and only if it records when, so a season created
+// directly into 'locked' would be an archive with no ballots in it. The CHECK
+// refuses it, which is the right answer.
+//
+// year is UNIQUE (season_year_key), so a second attempt for the same year
+// comes back as SQLSTATE 23505 and the handler turns it into a sentence.
+func (q *Queries) CreateSeason(ctx context.Context, arg CreateSeasonParams) (Season, error) {
+	row := q.db.QueryRow(ctx, createSeason,
+		arg.Year,
+		arg.Name,
+		arg.State,
+		arg.SubmitOpensAt,
+		arg.VoteOpensAt,
+		arg.VoteClosesAt,
+		arg.DefaultSubmitLimit,
+	)
+	var i Season
+	err := row.Scan(
+		&i.ID,
+		&i.Year,
+		&i.Name,
+		&i.ThemePack,
+		&i.SubmitOpensAt,
+		&i.VoteOpensAt,
+		&i.VoteClosesAt,
+		&i.LockedAt,
+		&i.State,
+		&i.DefaultSubmitLimit,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getCurrentSeason = `-- name: GetCurrentSeason :one
 SELECT id, year, name, theme_pack, submit_opens_at, vote_opens_at, vote_closes_at, locked_at, state, default_submit_limit, created_at FROM season
 WHERE state <> 'draft'
@@ -170,6 +246,64 @@ func (q *Queries) ListSeasons(ctx context.Context) ([]Season, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateSeasonDetails = `-- name: UpdateSeasonDetails :one
+UPDATE season
+SET name                 = $1,
+    submit_opens_at      = $2,
+    vote_opens_at        = $3,
+    vote_closes_at       = $4,
+    default_submit_limit = $5
+WHERE id = $6
+RETURNING id, year, name, theme_pack, submit_opens_at, vote_opens_at, vote_closes_at, locked_at, state, default_submit_limit, created_at
+`
+
+type UpdateSeasonDetailsParams struct {
+	Name               string
+	SubmitOpensAt      pgtype.Timestamptz
+	VoteOpensAt        pgtype.Timestamptz
+	VoteClosesAt       pgtype.Timestamptz
+	DefaultSubmitLimit int32
+	ID                 uuid.UUID
+}
+
+// Re-dating a season after it exists, which is the half of ticket D3 that gets
+// used more than once: the submission deadline slips every year.
+//
+// Deliberately NOT a superset of UpdateSeasonState. state and locked_at have to
+// move together and that query derives locked_at so no caller can construct a
+// combination the CHECK refuses; folding the two together here would hand every
+// date edit the ability to lock a season by accident.
+//
+// year is not updatable either. It is the season's identity -- the UNIQUE key
+// the archive is browsed by -- and "the 2026 season is now 2027" is a different
+// operation from "the 2026 deadline moved", with different consequences for
+// every link already pasted into the group chat.
+func (q *Queries) UpdateSeasonDetails(ctx context.Context, arg UpdateSeasonDetailsParams) (Season, error) {
+	row := q.db.QueryRow(ctx, updateSeasonDetails,
+		arg.Name,
+		arg.SubmitOpensAt,
+		arg.VoteOpensAt,
+		arg.VoteClosesAt,
+		arg.DefaultSubmitLimit,
+		arg.ID,
+	)
+	var i Season
+	err := row.Scan(
+		&i.ID,
+		&i.Year,
+		&i.Name,
+		&i.ThemePack,
+		&i.SubmitOpensAt,
+		&i.VoteOpensAt,
+		&i.VoteClosesAt,
+		&i.LockedAt,
+		&i.State,
+		&i.DefaultSubmitLimit,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const updateSeasonState = `-- name: UpdateSeasonState :one

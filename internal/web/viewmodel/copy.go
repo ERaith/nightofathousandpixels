@@ -180,6 +180,27 @@ const (
 	KeySubmitExistingHead  = "submit.existing.heading"
 	KeySubmitErrorsHeading = "submit.errors.heading"
 
+	// Editing and withdrawing a film you already put up (ticket E3). The same
+	// form serves both jobs, so these are the three strings that have to
+	// change when it is doing the second one -- see SubmitPage.HeadingCopyKey.
+	//
+	// Withdraw is its own small vocabulary rather than a reuse of "delete",
+	// and that is not squeamishness. Nothing is deleted: movie.hidden is set,
+	// the ballots that ranked the film survive, and an admin can still see it.
+	// A button that says "Delete" would be describing an operation this site
+	// deliberately does not have.
+	KeyEditHeading       = "edit.heading"
+	KeyEditLead          = "edit.lead"
+	KeyEditButton        = "edit.button"
+	KeyWithdrawHeading   = "edit.withdraw.heading"
+	KeyWithdrawBody      = "edit.withdraw.body"
+	KeyWithdrawButton    = "edit.withdraw.button"
+	KeyWithdrawConfirmed = "edit.withdraw.confirmed"
+	KeyEditSaved         = "edit.saved"
+	KeyMovieEditCTA      = "movie.edit.cta"
+	KeyEditClosedHeading = "edit.closed.heading"
+	KeyEditClosedBody    = "edit.closed.body"
+
 	// The submit form's fields. Labels and hints, not validation messages:
 	// what a field is called is wording, what is wrong with it is a fact.
 	KeySubmitTitleLabel       = "submit.field.title.label"
@@ -321,6 +342,21 @@ var BaseCopy = Copy{
 	KeySubmitBack:          "See what is on the board",
 	KeySubmitExistingHead:  "{count} from you so far",
 	KeySubmitErrorsHeading: "{count} to fix before this goes up.",
+
+	KeyEditHeading: "Change your pick",
+	KeyEditLead: "Anything here can change while submissions are open. " +
+		"Once the board shuts, it is what it is.",
+	KeyEditButton:      "Save the changes",
+	KeyWithdrawHeading: "Take it back off the board",
+	KeyWithdrawBody: "It comes off the slate and your pick comes back, so you can put " +
+		"something else up instead. Anyone who already ranked it keeps their ballot.",
+	KeyWithdrawButton:    "Withdraw this film",
+	KeyWithdrawConfirmed: "{title} is off the board. You have your pick back.",
+	KeyEditSaved:         "Saved. {title} is up to date on the board.",
+	KeyMovieEditCTA:      "Edit or withdraw",
+	KeyEditClosedHeading: "The board is shut",
+	KeyEditClosedBody: "Submissions closed, so films cannot be changed or withdrawn any more. " +
+		"What is up is what gets ranked.",
 
 	KeySubmitTitleLabel:       "Title",
 	KeySubmitTitleHint:        "The name of the film. This is the only part we cannot guess.",

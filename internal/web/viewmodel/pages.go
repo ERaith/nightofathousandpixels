@@ -99,6 +99,69 @@ type SubmitPage struct {
 
 	// CancelHref is the way back out, normally the slate.
 	CancelHref string
+
+	// HeadingKey, LeadKey and ButtonKey let the same page render as the edit
+	// form (ticket E3). Blank means the new-submission wording, so every
+	// existing caller keeps what it had.
+	//
+	// They are copy KEYS rather than strings because these three lines belong
+	// to a theme pack, like every other sentence on the page. A handler that
+	// could pass the words themselves would be the one place on the site where
+	// a pack silently stops being in charge of its own voice.
+	HeadingKey string
+	LeadKey    string
+	ButtonKey  string
+
+	// WithdrawAction is where the withdraw button posts, and non-blank is what
+	// puts the control on the page at all.
+	//
+	// It is separate from Action because withdrawing is a different write from
+	// saving an edit: one form cannot have two methods, and a single form with
+	// two submit buttons distinguished by name is how a person on a phone
+	// takes a film off the board by pressing Enter in the title field.
+	//
+	// It is also gated by the same CanSubmit the form is: an edit that the
+	// season window refuses is a withdrawal the season window refuses too.
+	WithdrawAction string
+}
+
+// HeadingCopyKey is the key for the h1: the edit wording when this page is
+// editing, the submit wording otherwise.
+func (p SubmitPage) HeadingCopyKey() string {
+	if p.HeadingKey != "" {
+		return p.HeadingKey
+	}
+
+	return KeySubmitHeading
+}
+
+// LeadCopyKey is the key for the line under the heading.
+func (p SubmitPage) LeadCopyKey() string {
+	if p.LeadKey != "" {
+		return p.LeadKey
+	}
+
+	return KeySubmitLead
+}
+
+// ButtonCopyKey is the key for the form's submit button.
+func (p SubmitPage) ButtonCopyKey() string {
+	if p.ButtonKey != "" {
+		return p.ButtonKey
+	}
+
+	return KeySubmitButton
+}
+
+// CanWithdraw reports whether to render the withdraw control.
+//
+// It is CanSubmit and an action together rather than either alone. CanSubmit
+// carries the handler's decision about the season window and this viewer;
+// WithdrawAction carries whether there is a film to withdraw at all. A page
+// that had one without the other would be either a button that cannot work or
+// a decision that never reached the markup.
+func (p SubmitPage) CanWithdraw() bool {
+	return p.CanSubmit && p.WithdrawAction != ""
 }
 
 // SignInPage is the page that asks someone to sign in with Google.

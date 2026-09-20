@@ -78,6 +78,7 @@ type Store interface {
 	GetCurrentSeason(ctx context.Context) (store.Season, error)
 	GetPerson(ctx context.Context, id uuid.UUID) (store.Person, error)
 	GetSeasonMember(ctx context.Context, arg store.GetSeasonMemberParams) (store.SeasonMember, error)
+	GetMovie(ctx context.Context, id uuid.UUID) (store.Movie, error)
 	GetEffectiveSubmitLimit(ctx context.Context, arg store.GetEffectiveSubmitLimitParams) (int32, error)
 	CountPersonMoviesInSeason(ctx context.Context, arg store.CountPersonMoviesInSeasonParams) (int64, error)
 	ListPersonMoviesForSeason(ctx context.Context, arg store.ListPersonMoviesForSeasonParams) ([]store.Movie, error)
@@ -179,6 +180,11 @@ func (s *Service) Routes(r chi.Router) {
 		r.Get(SubmitPath, s.handleSubmitForm)
 		r.Post(SubmitPath, s.handleSubmitPost)
 	})
+
+	// Changing or withdrawing a film you already put up (ticket E3). It lives
+	// in edit.go and mounts its own routes behind the same gate, so that the
+	// three routes and the five preconditions they share sit in one file.
+	s.editRoutes(r)
 }
 
 // viewer is who is looking at a public page: nobody, somebody signed in who is
