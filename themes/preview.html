@@ -65,6 +65,21 @@
      !important. Loses: the floors are written as max(44px, var(--_tap)). */
   html body { --_tap: 8px; --_fs-body: 9px; }
 
+  /* The same attack against the tokens that have no floor, because a ring's
+     colour and an error's colour are not quantities you can max(). These
+     three lines removed all 22 focus rings while the two floors above held
+     (nap-cfs) — base won the cascade and painted a 0px transparent ring.
+     Loses: those tokens are now sealed inside @layer nap-enforce. */
+  html body {
+    --_focus-width: 0px; --_focus-offset: 0px; --_focus: transparent;
+    --_ok: transparent; --_warn: transparent; --_danger: transparent;
+    --_on-accent: transparent;
+  }
+
+  /* Form controls under the 16px iOS-zoom floor. Loses: section 4's floor,
+     which section 7 sets unlayered and this used to beat. */
+  html body input, html body textarea, html body select { font-size: 6px; }
+
   /* Redefine what 1rem means, which would drag every rem-based floor down
      with it. Loses: section 2's `font-size: 100% !important` on html. */
   html:root { font-size: 4px; }

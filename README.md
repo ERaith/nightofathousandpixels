@@ -105,24 +105,48 @@ own volumes, own ports. That's how several people (or agents) work at once.
 
 ---
 
+### How the tests are split
+
+**A test that needs Postgres carries `//go:build integration`.** That is the
+whole contract, and it is checked rather than documented, because the version
+that was only documented was false for months.
+
+`make test` does not compile those files, so it needs no Docker and it prints
+what it left out. `make test-integration` is the only path that touches a
+database; it starts and migrates a throwaway one, and it **refuses to run if
+the tag selects no tests**. That last guard is the important one: before it,
+`-tags=integration` matched no file in the repository, so the integration
+suite was empty and every green it produced meant nothing — while the same
+tests, untagged, skipped under a bare `go test ./...` and let the package print
+`ok` having connected to nothing (nap-gn1).
+
+Two more guards keep it true as the tree grows, both in the ordinary unit
+suite:
+
+* `TestEveryDatabaseTestCarriesTheIntegrationTag` fails if a database test
+  joins the unit suite.
+* `TestTheDSNCheckIsFatalNotASkip` fails if one of them goes back to skipping
+  when `TEST_DATABASE_URL` is empty. Under the tag, an absent database is a
+  broken invocation, not a reason to report `ok`.
+
+That last target is not ceremony. The mock OIDC provider is a separate `main`
+package, so `go list -deps ./cmd/server` does not mention
+`oauth2-proxy/mockoidc` — and if it ever does, the mock identity provider is
+inside the shipped binary. A Dockerfile stage is a convention; an absent import
+is a fact, so the fact is what gets checked.
+
+---
+
 ## Known broken, as of this writing
 
 Be aware of these before you lose an hour to one. Each has an open ticket.
 
-- **`make test` fails without Docker.** The Makefile's bare `export` leaks
-  `TEST_DATABASE_URL` into every recipe, so tests dial a database `make test` never
-  starts. Fix in review. → `nap-gn1`
-- **`make test-integration` selects nothing.** It passes `-tags=integration`, but no
-  file carries that build tag yet. It prints "no tests to run" and exits 0. → `nap-gn1`
 - **`make compose-up` crash-loops.** The base compose stack has no OIDC provider, so
   the app can't complete startup discovery and restarts forever. Use `make dev`.
   → `nap-0yg`
 - **`make templ-generate` does nothing inside a git worktree.** It reports
   `updates=0` and exits 0. `make build` depends on it, so a `.templ` edit can silently
-  fail to take effect. Fine in a normal clone. Fix in review. → `nap-hil`
-- **One test is red on purpose.** `TestSeasonStateTracksLockedAt` asserts a season can
-  be unlocked; migration `00008` forbids it. The test is wrong, not the trigger. Fix in
-  review. → `nap-3wo`
+  fail to take effect. Fine in a normal clone. Fixed on this branch; verify. → `nap-hil`
 
 ---
 

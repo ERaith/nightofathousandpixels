@@ -1,3 +1,25 @@
+//go:build integration
+
+// Live-database tests. They are behind the `integration` build tag, which is
+// the repository's one contract for "this test needs Postgres":
+//
+//     go test ./...                  compiles nothing in this file
+//     make test                      the same, and says so
+//     make test-integration          starts a database, migrates it, runs this
+//
+// The tag exists because the alternative did not work. This file used to be
+// untagged and to skip when TEST_DATABASE_URL was empty, so a bare
+// `go test ./...` printed `ok  internal/store` having run no database test at
+// all -- for months, including the runs used to justify merges (nap-gn1). A
+// skip that fires by default is indistinguishable from a pass in every summary
+// anyone actually reads.
+//
+// With the tag, the untagged run does not compile these tests, `make test`
+// prints what it left out, and `make test-integration` fails outright if the
+// tag selects nothing. A missing TEST_DATABASE_URL is therefore a FATAL here
+// rather than a skip: under this tag the database is the point, so its absence
+// is a broken invocation, not a reason to go quietly green.
+
 package integrity
 
 import (
@@ -75,14 +97,16 @@ INSERT INTO result (season_id, winner_movie_id, rounds) VALUES
 INSERT INTO audit_log (actor, action, target) VALUES ('system','season.lock','2025');
 `
 
-// testDSN is the migrated throwaway database from `make test-db-up`. Without
-// it there is nothing to assert against, so the whole file skips and plain
-// `go test ./...` still passes with no Docker.
+// testDSN is the migrated throwaway database from `make test-db-up`. Under the
+// integration tag its absence is fatal rather than a skip -- see the note at
+// the top of this file for why.
 func testDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping live database test")
+		t.Fatal("TEST_DATABASE_URL is not set.\n" +
+			"These tests are built with -tags=integration, which means they need a database.\n" +
+			"Run them with `make test-integration`, which starts and migrates one.")
 	}
 	return dsn
 }

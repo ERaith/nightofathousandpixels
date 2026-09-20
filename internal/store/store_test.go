@@ -1,3 +1,25 @@
+//go:build integration
+
+// Live-database tests. They are behind the `integration` build tag, which is
+// the repository's one contract for "this test needs Postgres":
+//
+//     go test ./...                  compiles nothing in this file
+//     make test                      the same, and says so
+//     make test-integration          starts a database, migrates it, runs this
+//
+// The tag exists because the alternative did not work. This file used to be
+// untagged and to skip when TEST_DATABASE_URL was empty, so a bare
+// `go test ./...` printed `ok  internal/store` having run no database test at
+// all -- for months, including the runs used to justify merges (nap-gn1). A
+// skip that fires by default is indistinguishable from a pass in every summary
+// anyone actually reads.
+//
+// With the tag, the untagged run does not compile these tests, `make test`
+// prints what it left out, and `make test-integration` fails outright if the
+// tag selects nothing. A missing TEST_DATABASE_URL is therefore a FATAL here
+// rather than a skip: under this tag the database is the point, so its absence
+// is a broken invocation, not a reason to go quietly green.
+
 package store_test
 
 import (
@@ -10,6 +32,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -57,13 +80,16 @@ func containsSeason(seasons []store.Season, id uuid.UUID) bool {
 // honest close, which returns as soon as the last connection is back.
 const poolCloseTimeout = 10 * time.Second
 
-// connect opens a pool against TEST_DATABASE_URL, skipping the test when it is
-// unset so that `go test ./...` still works without Docker.
+// connect opens a pool against TEST_DATABASE_URL. Under the integration tag a
+// missing DSN is fatal: see the note at the top of this file for why it is not
+// a skip.
 func connect(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping live database test")
+		t.Fatal("TEST_DATABASE_URL is not set.\n" +
+			"These tests are built with -tags=integration, which means they need a database.\n" +
+			"Run them with `make test-integration`, which starts and migrates one.")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -422,8 +448,48 @@ func TestMovieCapAndSoftDelete(t *testing.T) {
 	t.Logf("alice's own list agrees with the cap count: %d", len(own))
 }
 
+// lockedSeasonErrCode is the SQLSTATE raised by nap_reject_season_unlock and
+// nap_reject_locked_season_delete (00008_integrity_guards.sql). A project-
+// defined code rather than a standard one, so "you tried to edit the archive"
+// is distinguishable from every other integrity error. The same constant
+// lives in internal/store/integrity, which is a separate test binary and
+// cannot be imported.
+const lockedSeasonErrCode = "NAPLK"
+
+// sqlstate pulls the five-character SQLSTATE out of an error, or "" when the
+// error did not come from Postgres. Asserting on the code rather than on the
+// message is what makes the assertion about the guard instead of about its
+// wording.
+func sqlstate(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
+}
+
 // TestSeasonStateTracksLockedAt proves the CHECK constraint cannot be violated
-// through the generated query, in either direction.
+// through the generated query, and that `locked` is a one-way door.
+//
+// This test used to walk voting -> locked -> submitting -> locked -> draft and
+// assert that state was freely settable in any order. Two of those steps
+// unlock a locked season, which 00008's nap_reject_season_unlock refuses with
+// SQLSTATE NAPLK, so the test asserted a capability the schema forbids and was
+// the integration branch's standing red (nap-3wo). Nobody saw it for hours
+// because the whole package skipped without TEST_DATABASE_URL (nap-gn1).
+//
+// Adjudicated: `locked` is terminal for accidental transitions, so the TEST
+// changes and the trigger stands. The rewrite therefore asserts three things:
+//
+//   - forward transitions work, and locked_at tracks state in both directions;
+//   - re-locking a locked season keeps the ORIGINAL lock time, which is what
+//     the COALESCE in UpdateSeasonState exists for;
+//   - an unlock through the generated query, without the escape hatch, is
+//     rejected with NAPLK and leaves the season exactly as it was.
+//
+// That last one is the valuable half. internal/store/integrity pins the guard
+// against hand-written SQL; this pins it against the query the application
+// actually calls, which is the path a season would really be unlocked by.
 func TestSeasonStateTracksLockedAt(t *testing.T) {
 	pool := connect(t)
 	tx := begin(t, pool)
@@ -432,7 +498,23 @@ func TestSeasonStateTracksLockedAt(t *testing.T) {
 
 	seasonID := seedSeason(t, tx, 2028, 2)
 
-	for _, state := range []string{"voting", "locked", "submitting", "locked"} {
+	// Windows first: once the season is locked it cannot be edited, and the
+	// clearable-windows assertion is about a season still being run.
+	var ts pgtype.Timestamptz
+	if err := ts.Scan(nil); err != nil {
+		t.Fatalf("null ts: %v", err)
+	}
+	w, err := q.UpdateSeasonWindows(ctx, store.UpdateSeasonWindowsParams{
+		ID: seasonID, SubmitOpensAt: ts, VoteOpensAt: ts, VoteClosesAt: ts,
+	})
+	if err != nil {
+		t.Fatalf("clear windows: %v", err)
+	}
+	t.Logf("cleared windows: submit=%v vote_opens=%v vote_closes=%v",
+		w.SubmitOpensAt.Valid, w.VoteOpensAt.Valid, w.VoteClosesAt.Valid)
+
+	// Forward through the season's life. seedSeason starts at 'submitting'.
+	for _, state := range []string{"draft", "submitting", "voting", "locked"} {
 		s, err := q.UpdateSeasonState(ctx, store.UpdateSeasonStateParams{ID: seasonID, State: state})
 		if err != nil {
 			t.Fatalf("set state %s: %v", state, err)
@@ -443,21 +525,65 @@ func TestSeasonStateTracksLockedAt(t *testing.T) {
 		}
 	}
 
-	// Windows are nullable and clearable.
-	var ts pgtype.Timestamptz
-	if err := ts.Scan(nil); err != nil {
-		t.Fatalf("null ts: %v", err)
+	var lockedAt pgtype.Timestamptz
+	if err := tx.QueryRow(ctx, `SELECT locked_at FROM season WHERE id = $1`, seasonID).Scan(&lockedAt); err != nil {
+		t.Fatalf("read locked_at: %v", err)
 	}
-	if _, err := q.UpdateSeasonState(ctx, store.UpdateSeasonStateParams{ID: seasonID, State: "draft"}); err != nil {
-		t.Fatalf("back to draft: %v", err)
+	if !lockedAt.Valid {
+		t.Fatal("a locked season has no locked_at")
 	}
-	s, err := q.UpdateSeasonWindows(ctx, store.UpdateSeasonWindowsParams{
-		ID: seasonID, SubmitOpensAt: ts, VoteOpensAt: ts, VoteClosesAt: ts,
-	})
+
+	// Re-locking is not an unlock, so the trigger lets it through -- and the
+	// COALESCE keeps the moment the season first locked rather than stamping
+	// it again. Without that, re-running the lock would silently rewrite when
+	// the archive says the year closed.
+	relocked, err := q.UpdateSeasonState(ctx, store.UpdateSeasonStateParams{ID: seasonID, State: "locked"})
 	if err != nil {
-		t.Fatalf("clear windows: %v", err)
+		t.Fatalf("re-lock a locked season: %v", err)
 	}
-	t.Logf("cleared windows: submit=%v vote_opens=%v vote_closes=%v", s.SubmitOpensAt.Valid, s.VoteOpensAt.Valid, s.VoteClosesAt.Valid)
+	if !relocked.LockedAt.Time.Equal(lockedAt.Time) {
+		t.Errorf("re-locking moved locked_at from %v to %v; COALESCE in UpdateSeasonState should preserve it",
+			lockedAt.Time, relocked.LockedAt.Time)
+	}
+	t.Logf("re-locking kept locked_at at %v", lockedAt.Time)
+
+	// The guard. A locked season is the published archive, and leaving
+	// 'locked' is what would lift the delete guards off its ballots, roster,
+	// slate and result -- so the generated query has to be refused too.
+	//
+	// Inside a savepoint, because a rejected statement aborts the surrounding
+	// transaction and there are assertions after this one. Rolling the
+	// savepoint back is also what lets the "nothing moved" check below read
+	// the row at all.
+	for _, state := range []string{"draft", "submitting", "voting"} {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("savepoint: %v", err)
+		}
+		_, err = store.New(sp).UpdateSeasonState(ctx, store.UpdateSeasonStateParams{ID: seasonID, State: state})
+		if err == nil {
+			t.Errorf("UpdateSeasonState unlocked a locked season to %q", state)
+		} else if got := sqlstate(err); got != lockedSeasonErrCode {
+			t.Errorf("unlock to %q: SQLSTATE = %q, want %q: %v", state, got, lockedSeasonErrCode, err)
+		} else {
+			t.Logf("unlock to %-11s rejected with SQLSTATE %s", state, got)
+		}
+		if err := sp.Rollback(ctx); err != nil {
+			t.Fatalf("rollback savepoint: %v", err)
+		}
+	}
+
+	// And the refusals left the season alone, rather than half-applying.
+	after, err := q.GetSeason(ctx, seasonID)
+	if err != nil {
+		t.Fatalf("read the season back: %v", err)
+	}
+	if after.State != "locked" {
+		t.Errorf("season state = %q, want locked", after.State)
+	}
+	if !after.LockedAt.Valid || !after.LockedAt.Time.Equal(lockedAt.Time) {
+		t.Errorf("locked_at = %v (valid=%v), want %v", after.LockedAt.Time, after.LockedAt.Valid, lockedAt.Time)
+	}
 }
 
 // TestSeasonListingAndMembers covers the archive queries and the joined member

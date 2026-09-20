@@ -62,15 +62,28 @@ a wrapper div will not be picked up.
 
 ## What a pack must never do
 
-- **Never set a `--_`-prefixed token.** Those are private to `base.css` and
-  are redefined there after your pack has had its say.
+- **Never set a `--_`-prefixed token.** Those are private to `base.css`. It
+  ignores a smaller value where a floor exists (`max(44px, var(--_tap))`), and
+  the ones carrying a guarantee no floor can express — `--_focus`,
+  `--_focus-width`, `--_focus-offset`, `--_ok`, `--_warn`, `--_danger`,
+  `--_on-accent` — are redeclared on every element inside
+  `@layer nap-enforce`, so setting them has no effect anywhere. This is
+  checked: `themes/test_enforce_floors.py` fails if a private token is read
+  inside the enforce layer with neither a `max()` floor nor a seal.
+
+  It is worth knowing what that stops, because it was live until recently.
+  Three lines, no `!important`, no `@layer` —
+  `html body { --_focus-width: 0px; --_focus-offset: 0px; --_focus: transparent }`
+  — removed all 22 focus rings on `preview.html` while the text and
+  tap-target floors held. Base won the cascade and painted a 0px transparent
+  ring.
 - **Never write layout.** No `display`, `grid-template-*`, `flex`,
   `position`, `width`, `max-width`, `margin` or `padding` on base's
   classes. If a theme genuinely needs a different arrangement, that is a
   change to `base.css` with a review, not a pack override.
 - **Never touch focus.** No `:focus`, no `:focus-visible`, no `outline`.
   The ring already takes your `--accent`, which is the only customisation
-  it needs.
+  it needs — and the only one it will accept.
 - **Never write `@media (prefers-reduced-motion: ...)`.** Base owns that
   block and switches your animations off inside it.
 - **Never set a font-size below `1rem`.** 16px is the floor, everywhere,

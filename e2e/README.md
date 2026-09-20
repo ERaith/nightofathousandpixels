@@ -205,7 +205,7 @@ these were checked rather than assumed. Each was reverted afterwards.
   binary's real module list, so the negative assertion is searching actual
   content rather than an empty string.
 - **Edit a template without regenerating.** Changing a heading in `home.templ`
-  and leaving `home_templ.go` alone makes `make e2e` fail in `e2e-templ-fresh`
+  and leaving `home_templ.go` alone makes `make e2e` fail in `templ-fresh`
   before a browser starts, naming the stale file.
 
 ### Stale templates, which is the failure mode this nearly had
@@ -214,27 +214,39 @@ The image is built from the **committed** `*_templ.go` — the Dockerfile only
 runs `go build`. So a `.templ` edited without regenerating produces a suite
 that passes happily against markup nobody is serving.
 
-Inside an agent worktree that is not hypothetical. `make templ-generate`
-generates *nothing at all* there while printing a tick and exiting 0
-(**nap-hil**): `TEMPL_IGNORE` is unanchored and templ matches it against
-absolute paths, so `/worktrees/` in the path makes the pattern match every file
-in the tree. Reproduced here — `updates=0`, and a deliberately corrupted
-generated file survived untouched.
+Inside an agent worktree that used to be worse than hypothetical: `make
+templ-generate` generated *nothing at all* there while printing a tick and
+exiting 0 (**nap-hil**). `TEMPL_IGNORE` was unanchored and templ matches it
+against absolute paths, so `/worktrees/` in the path made the pattern match
+every file in the tree.
 
-`make e2e` therefore runs `e2e-templ-fresh` first, which regenerates with a
-pattern anchored at this checkout's root, with the root regex-escaped (see the
-note on `TEMPL_IGNORE_E2E` in the Makefile), and fails if anything changed.
+`TEMPL_IGNORE` is now anchored at this checkout's root with the root
+regex-escaped — both halves load-bearing; see the note in the Makefile, which
+keeps the history because three earlier patterns each reintroduced the bug by
+another route.
 
-Three earlier patterns were tried and the first two each reintroduced the bug
-by another route — dropping the exclusion made templ rewrite every other
-agent's worktree from the main clone; leaving the pattern unanchored meant a
-checkout under an ambient `tmp`, `bin` or `archive` directory matched every
-file. That is the shape of a silent-failure bug: every fix for it is itself
-hard to verify.
+**The pattern was the bug, but the absence of a check is why it survived**, so
+`make e2e` runs `templ-fresh` first and so does `make check`. It deletes the
+tracked `*_templ.go`, regenerates them with the same `-path .` the canonical
+target uses, and fails if the tree is not byte-identical afterwards. Deleting
+first is what makes one check catch both failures:
 
-Delete the pattern when nap-hil lands. **Keep the guard.** A fix without a
-check just relocates the next occurrence; the pattern is the bug, but the
-absence of a check is why eight of these survived.
+| what comes back | what it means |
+| --- | --- |
+| files modified | the committed output was stale |
+| files still deleted | templ generated nothing at all — nap-hil |
+
+A plain regenerate-and-diff catches only the first. If templ ignores every file
+it writes nothing, the tree stays clean, and the guard passes for the exact
+reason it exists to catch.
+
+Two traps for anyone changing it. The guard must use the **same `-path .`** as
+`templ-generate`: templ bakes the source path into the `FileName` of every
+`templ.Error`, so regenerating with a narrower `-path` rewrites that string in
+every generated file and reports pure churn as drift — a false failure
+indistinguishable from the real one. And `templ generate` reports `updates=0`
+on a healthy tree as well as on an ignored one, because it counts files whose
+*content* changed; "fail when updates is zero" does not work.
 
 ## Debugging a failure
 
