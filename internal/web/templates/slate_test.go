@@ -95,6 +95,14 @@ func TestEmptySlateSignedOutOffersTheWayIn(t *testing.T) {
 // A film with no trailer and no description is the minimum a movie row can
 // carry. The card has to look deliberate rather than half-loaded, which means
 // no empty player and no dangling "watch" link.
+//
+// It DOES keep its media box, and that changed with nap-luo. The box used to
+// be rendered only when there was a trailer to put in it, so a film without
+// one came out half the height of the film beside it and the board read as a
+// list of ragged paragraphs. The box is now reserved on every card and this
+// one says what is in it, which is nothing. That is the difference between a
+// card that is deliberate and a card that looks like it failed to load, and
+// it is the assertion that has to survive somebody "tidying up" an empty box.
 func TestSlateCardWithoutATrailer(t *testing.T) {
 	t.Parallel()
 
@@ -110,7 +118,14 @@ func TestSlateCardWithoutATrailer(t *testing.T) {
 		t.Error("the card does not credit its submitter")
 	}
 
-	for _, unwanted := range []string{"<iframe", "card__media", "Watch the trailer"} {
+	if !strings.Contains(main, `class="card__media"`) {
+		t.Error("a film with no trailer lost its media box, so its card is shorter than every other card on the board")
+	}
+	if !strings.Contains(main, "No trailer") {
+		t.Error("the media box on a trailerless card says nothing, so it reads as a player that failed to load")
+	}
+
+	for _, unwanted := range []string{"<iframe", "Watch the trailer"} {
 		if strings.Contains(main, unwanted) {
 			t.Errorf("a film with no trailer rendered %s", unwanted)
 		}
@@ -158,13 +173,29 @@ func TestSlateEmbedsPlayableTrailersLazily(t *testing.T) {
 	main := mainContent(t, render(t, templates.SlatePage(page)))
 
 	for _, want := range []string{
-		`<div class="card__media"><iframe src="` + movie.TrailerEmbedURL + `"`,
+		`<iframe src="` + movie.TrailerEmbedURL + `"`,
 		`title="Trailer: ` + movie.Title + `"`,
 		`loading="lazy"`,
 	} {
 		if !strings.Contains(main, want) {
 			t.Errorf("the embedded trailer is missing %s", want)
 		}
+	}
+
+	// And it plays INSIDE the reserved box rather than beside it, which is
+	// what keeps the 16:9 slot from collapsing as the iframe lazily arrives.
+	box := strings.Index(main, `class="card__media"`)
+	if box < 0 {
+		t.Fatal("the card has no media box")
+	}
+
+	closed := strings.Index(main[box:], "</div>")
+	if closed < 0 {
+		t.Fatal("the media box is never closed")
+	}
+
+	if frame := strings.Index(main[box:], "<iframe"); frame < 0 || frame > closed {
+		t.Error("the player is not inside the card's media box")
 	}
 }
 
@@ -448,5 +479,83 @@ func TestZeroSlateStillHasAHeading(t *testing.T) {
 	}
 	if strings.Contains(main, "<h1></h1>") {
 		t.Error("a zero slate rendered an empty heading")
+	}
+}
+
+// nap-luo moved the quota sentence out of the middle of the page and into the
+// season strip, beside the deadline. It has to appear ONCE: printing it in
+// both places is the version of this change that looks finished and is not.
+func TestQuotaIsSaidOnceAndNextToTheDeadline(t *testing.T) {
+	t.Parallel()
+
+	page := viewmodel.FixtureSlateAtLimit()
+	main := mainContent(t, render(t, templates.SlatePage(page)))
+
+	line := page.Quota.Label()
+	if line == "" {
+		t.Fatal("the at-limit fixture has no quota sentence, so there is nothing to place")
+	}
+	if n := strings.Count(main, line); n != 1 {
+		t.Errorf("the quota sentence appears %d times, want exactly 1", n)
+	}
+
+	strip := strings.Index(main, `class="season-strip"`)
+	if strip < 0 {
+		t.Fatal("no season strip on a page that has both a deadline and a quota")
+	}
+
+	// Both facts inside the one element: the date this season turns over, and
+	// what this particular viewer has left.
+	end := strip + strings.Index(main[strip:], "</div></div>")
+	if !strings.Contains(main[strip:end], line) {
+		t.Error("the quota sentence is not in the season strip")
+	}
+	if want := page.Season.VoteOpensLabel(); !strings.Contains(main[strip:end], want) {
+		t.Errorf("the deadline %q is not in the season strip beside it", want)
+	}
+}
+
+// Neither half is a real state: a signed-out visitor has no quota, and all
+// four window columns in migration 00002 are nullable so a season can exist
+// with no dates at all. An empty bordered box saying nothing is worse than no
+// box.
+func TestSeasonStripIsAbsentWhenThereIsNothingToPutInIt(t *testing.T) {
+	t.Parallel()
+
+	page := viewmodel.FixtureEmptySlate()
+	page.Season = viewmodel.FixtureSeasonUnscheduled()
+	page.Quota = viewmodel.FixtureQuotaUnknown()
+	page.CanSubmit = false
+
+	main := mainContent(t, render(t, templates.SlatePage(page)))
+
+	if strings.Contains(main, "season-strip") {
+		t.Error("an empty season strip was rendered for a page with no deadline and no quota")
+	}
+}
+
+// The outlines on an empty board are there to show the visitor the shape of
+// the thing they are being asked to start. They carry no text and nothing to
+// press, so they are hidden from a screen reader that has just been told
+// nobody has gone first -- announcing three empty articles after that is
+// noise, and a focus stop in them is a keyboard trap with nothing in it.
+func TestEmptyBoardPreviewIsDecorationOnly(t *testing.T) {
+	t.Parallel()
+
+	main := mainContent(t, render(t, templates.SlatePage(viewmodel.FixtureEmptySlate())))
+
+	start := strings.Index(main, `class="slate-preview"`)
+	if start < 0 {
+		t.Fatal("the empty board has nothing to look at beyond its text")
+	}
+	if !strings.Contains(main[start-40:start+60], `aria-hidden="true"`) {
+		t.Error("the empty-board preview is not hidden from assistive technology")
+	}
+
+	preview := main[start:]
+	for _, unwanted := range []string{"<a ", "<button", "<input", "tabindex"} {
+		if strings.Contains(preview, unwanted) {
+			t.Errorf("the empty-board preview contains %s; it is decoration and must hold nothing", unwanted)
+		}
 	}
 }
