@@ -1,0 +1,5 @@
+[      16ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0
+[      18ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0
+[   36865ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0
+[  703036ms] [ERROR] Failed to load resource: net::ERR_NETWORK_IO_SUSPENDED @ http://localhost:7511/_templ/reload/events:0
+[ 1751621ms] [ERROR] Failed to load resource: net::ERR_NETWORK_IO_SUSPENDED @ http://localhost:7511/_templ/reload/events:0

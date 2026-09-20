@@ -1,0 +1,25 @@
+- main [ref=f1049e2]:
+  - heading "Mock sign-in" [level=1] [ref=f1049e3]
+  - paragraph [ref=f1049e4]: This is not Google. It is the development OIDC provider.
+  - generic [ref=f1049e5]: Nothing here is a shortcut past authentication. Choosing a name decides which address this provider signs an ID token for; the application still verifies that token and still decides whether the address is on the season’s whitelist.
+  - list [ref=f1049e6]:
+    - listitem [ref=f1049e7]:
+      - link "admin@example.test · Ada Admin admin for the 2026 season" [ref=f1049e8] [cursor=pointer]:
+        - /url: /oidc/authorize?client_id=nap-local-dev&code_challenge=PUrhh0bf3nIbaWHm3kUMoBNUnIoFksxmlI9jVMabI5I&code_challenge_method=S256&nap_user=admin%40example.test&nonce=p4B4yekz8OMq0QdtloVWeBfKn3I0GSHny4J8euAxVs0&redirect_uri=http%3A%2F%2Flocalhost%3A8260%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&state=7_qp0ggXnXn_G9EInV8ISQY65JsqRuGGoE2A3U3TMeA
+        - text: admin@example.test · Ada Admin
+        - generic [ref=f1049e9]: admin for the 2026 season
+    - listitem [ref=f1049e10]:
+      - link "alice@example.test · Alice Voter ordinary member" [ref=f1049e11] [cursor=pointer]:
+        - /url: /oidc/authorize?client_id=nap-local-dev&code_challenge=PUrhh0bf3nIbaWHm3kUMoBNUnIoFksxmlI9jVMabI5I&code_challenge_method=S256&nap_user=alice%40example.test&nonce=p4B4yekz8OMq0QdtloVWeBfKn3I0GSHny4J8euAxVs0&redirect_uri=http%3A%2F%2Flocalhost%3A8260%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&state=7_qp0ggXnXn_G9EInV8ISQY65JsqRuGGoE2A3U3TMeA
+        - text: alice@example.test · Alice Voter
+        - generic [ref=f1049e12]: ordinary member
+    - listitem [ref=f1049e13]:
+      - link "bob@example.test · Bob Voter ordinary member" [ref=f1049e14] [cursor=pointer]:
+        - /url: /oidc/authorize?client_id=nap-local-dev&code_challenge=PUrhh0bf3nIbaWHm3kUMoBNUnIoFksxmlI9jVMabI5I&code_challenge_method=S256&nap_user=bob%40example.test&nonce=p4B4yekz8OMq0QdtloVWeBfKn3I0GSHny4J8euAxVs0&redirect_uri=http%3A%2F%2Flocalhost%3A8260%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&state=7_qp0ggXnXn_G9EInV8ISQY65JsqRuGGoE2A3U3TMeA
+        - text: bob@example.test · Bob Voter
+        - generic [ref=f1049e15]: ordinary member
+    - listitem [ref=f1049e16]:
+      - link "stranger@example.test · Sam Stranger NOT on the whitelist - shows the refusal page" [ref=f1049e17] [cursor=pointer]:
+        - /url: /oidc/authorize?client_id=nap-local-dev&code_challenge=PUrhh0bf3nIbaWHm3kUMoBNUnIoFksxmlI9jVMabI5I&code_challenge_method=S256&nap_user=stranger%40example.test&nonce=p4B4yekz8OMq0QdtloVWeBfKn3I0GSHny4J8euAxVs0&redirect_uri=http%3A%2F%2Flocalhost%3A8260%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&state=7_qp0ggXnXn_G9EInV8ISQY65JsqRuGGoE2A3U3TMeA
+        - text: stranger@example.test · Sam Stranger
+        - generic [ref=f1049e18]: NOT on the whitelist - shows the refusal page

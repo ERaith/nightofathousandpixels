@@ -274,10 +274,19 @@ require-compose:
 # The dev stack the watchers run against. The server performs OIDC discovery
 # at startup and will not come up without a reachable provider, so this has to
 # happen before `dev-server` rather than beside it.
+#
+# It ends in `seed-dev`, which migrates and then loads the season and the
+# whitelist. See the note above `seed-dev` for why that is not optional: a
+# migrated database is an EMPTY database, and `make dev` without it hands a
+# developer a site that serves "Nobody has gone first yet" and refuses every
+# submission, including from the test users the README tells them to sign in
+# as. Nothing is broken and nothing logs, so it reads as a defect in the
+# board rather than as a missing fixture (nap-vav).
 .PHONY: dev-up
-dev-up: require-compose ## Start the dev stack: postgres and the mock OIDC provider
+dev-up: require-compose ## Start the dev stack: postgres, the mock OIDC provider, migrations and seed data
 	$(COMPOSE_DEV) up -d --build $(POSTGRES_SERVICE) mockoidc
 	@$(MAKE) wait-for-postgres
+	@$(MAKE) seed-dev
 	@echo "==> oidc provider on http://localhost:$(OIDC_PORT)/oidc"
 
 .PHONY: dev-down
@@ -568,8 +577,36 @@ seed: seed-dev ## Load development seed data (alias for seed-dev)
 # It migrates first so that `make seed-dev` works against a database that has
 # only just been created, rather than failing with "relation does not exist"
 # and making the reader work out that migrate-up was the missing step.
+#
+# ---------------------------------------------------------------------------
+# WHICH STACKS SEED, AND WHY IT IS NOT ALL OF THEM
+# ---------------------------------------------------------------------------
+#
+# Every stack a HUMAN or a BROWSER drives comes up seeded: `setup`, `dev-up`,
+# `compose-up` and `e2e-up` all end here or in `e2e-seed`. The reason is
+# nap-vav: a migrated database has no season and nobody on a whitelist, so the
+# site answers every request correctly and says "Nobody has gone first yet" and
+# "You're not on the list yet". Nothing is broken, nothing logs, and the page
+# reads as a bug rather than as a missing fixture. That cost a full day in the
+# browser suite before anyone looked at the database.
+#
+# The Go test database is the exception and MUST STAY ONE. `test-db-up` and
+# `test-integration` migrate and stop, on purpose - see the note beside them.
+#
+# Both properties this relies on live in cmd/seed rather than here:
+#
+#   idempotent      every statement is an upsert on a natural key, so running
+#                   this twice changes nothing. `dev-up` runs on every `make
+#                   dev`, which means most runs are the second one.
+#   non-destructive it is strictly additive, and upsertPerson deliberately does
+#                   NOT write google_sub: a person who has already signed in
+#                   keeps their subject. Clearing it would unlink them from
+#                   their own Google account and hand the row to whoever signed
+#                   in next. There is also no --reset, because a seed that can
+#                   wipe a database is a seed somebody eventually runs against
+#                   the wrong DATABASE_URL.
 .PHONY: seed-dev
-seed-dev: ## Seed the 2026 season and the four test users (see README.md)
+seed-dev: ## Migrate and seed the 2026 season and the four test users (see README.md)
 	@$(MAKE) migrate-up
 	$(GO) run ./cmd/seed
 
@@ -589,9 +626,27 @@ no-mock-provider-in-server: ## Fail if the mock OIDC provider is reachable from 
 docker-build: ## Build the shipped image (distroless, server binary only)
 	docker build --target final -t $(IMAGE):$(IMAGE_TAG) .
 
+# The `migrate` service gates the app, so the schema is in place by the time
+# this returns - and an empty schema is exactly the state nap-vav is about, so
+# the season and the whitelist go in here too. `seed-dev` re-runs goose from
+# the host first, which is a no-op against the schema the migrator container
+# has already applied and is worth the second of wall clock: it is the one
+# place the migrations on disk and the migrations in the image are compared.
+#
+# This is a LOCAL target, and the seed step is only safe because of that. It is
+# this laptop's slot-derived stack: DATABASE_URL points at
+# localhost:$(POSTGRES_PORT), the images are built from the working tree, and
+# nothing in this repository calls it from a deploy. The deployed stack is
+# brought up by the platform running `docker compose up` with its own
+# environment - it never reads .env and never runs make - which is what keeps
+# cmd/seed's four test people off it. Same for `setup`, which has always
+# seeded. If a deploy ever does start going through make, that is the moment to
+# put a guard in cmd/seed rather than to quietly drop this line.
 .PHONY: compose-up
-compose-up: ## Bring the whole stack up in containers (migrations gate the app)
+compose-up: ## Bring the whole stack up in containers (migrations gate the app), then seed
 	$(COMPOSE) up -d --build
+	@$(MAKE) wait-for-postgres
+	@$(MAKE) seed-dev
 	@echo "==> app on http://localhost:$(APP_PORT) (project $(COMPOSE_PROJECT_NAME))"
 
 .PHONY: compose-down
@@ -621,6 +676,27 @@ compose-e2e-config: ## Print the fully resolved e2e-stack config for this slot
 # ---------------------------------------------------------------------------
 # Throwaway test database
 # ---------------------------------------------------------------------------
+#
+# THESE TWO DO NOT SEED, AND THAT IS THE CORRECT BEHAVIOUR. DO NOT "FIX" IT.
+#
+# Everything a human or a browser drives comes up seeded (see the note above
+# `seed-dev`), so this looks like the one that was missed. It was not.
+#
+# The Go integration tests build their own fixtures, per test, and roll them
+# back: internal/web/board/submit_db_test.go calls newFixture eleven times, and
+# each call creates the season, the people and the membership rows that one
+# test needs. A seeded season underneath them would give every test state it
+# did not create and does not describe - a current season it did not open, with
+# a whitelist it did not write and a default_submit_limit it did not choose.
+#
+# That is a worse bug than the empty-database one, and a quieter one. A test
+# that passes because of a row somebody else's fixture left behind still passes
+# when the code it covers is deleted, and the way that is usually discovered is
+# that it starts failing when an UNRELATED test is reordered or removed. The
+# empty database at least fails the same way every time.
+#
+# So: a database a person looks at gets fixtures; a database a test looks at
+# gets only what that test put there.
 .PHONY: test-db-up
 # `run` rather than `up -d` for the migrator on purpose: it runs in the
 # foreground and returns goose's exit code, so a broken migration fails this
@@ -696,9 +772,35 @@ e2e-install: ## Install the e2e suite's node dependencies and browsers
 e2e-up: ## Bring up the e2e stack: throwaway database, mock OIDC provider, app
 	$(COMPOSE_E2E) up -d --build --wait mockoidc postgres
 	$(COMPOSE_E2E) run --rm --build migrate
+	@$(MAKE) e2e-seed
 	$(COMPOSE_E2E) up -d --build --wait app
 	@echo "==> e2e app  http://localhost:$(TEST_APP_PORT)"
 	@echo "==> e2e oidc $(E2E_ISSUER_URL)"
+
+# A migrated database is an EMPTY database: no season, and nobody on a
+# whitelist. Every journey past the front page needs both, and without them the
+# suite would not fail in an interesting way - it would sign somebody in
+# successfully and then assert against "No season is open", which reads as a
+# broken page rather than as a missing fixture. (That is how this landed: the
+# e2e stack had no seed at all, so `/slate` served the empty board and `/submit`
+# refused everyone.)
+#
+# It runs on the host against the published port rather than as a container,
+# for the same reason `e2e-templ-fresh` does: the Go toolchain is already a
+# requirement of `make e2e`, and a seeder image would be a third thing to keep
+# in step with cmd/seed.
+#
+# DATABASE_URL is assigned per-recipe so that the dev database - which is very
+# likely running, with data somebody cares about, on a neighbouring port -
+# cannot be the one that gets written to. The seed is additive and idempotent,
+# so running it twice, or against a stack brought up by hand, changes nothing.
+#
+# SEED_EXTRA_MEMBERS is passed through from the environment: the browser suite
+# sets it from e2e/lib/people.ts, so the list of who signs in and the list of
+# who is whitelisted are one list.
+.PHONY: e2e-seed
+e2e-seed: ## Seed the e2e database: the season, the dev cast, and SEED_EXTRA_MEMBERS
+	@DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) run ./cmd/seed
 
 .PHONY: e2e-down
 e2e-down: ## Stop the e2e stack and erase its database

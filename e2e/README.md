@@ -89,10 +89,10 @@ Most of the site does not exist yet. The suite reflects that honestly:
 | `smoke.spec.ts` | Runs. `/`, `/healthz`, the site's 404, `base.css`, and two phone-width checks. |
 | `oidc-provider.spec.ts` | Runs. A full authorization-code flow in a real browser, plus two checks that the provider refuses bad input. |
 | `shipped-image.spec.ts` | Runs. `mockoidc` is absent from `go list -deps ./cmd/server` **and** from the binary in the container. |
-| `sign-in.spec.ts` | One trip-wire runs; the journeys are skipped (nap-9jw, nap-l1i). |
-| `submit.spec.ts` | Skipped (nap-4l9, nap-ibx, nap-623). |
-| `slate.spec.ts` | Skipped (nap-nws, nap-1s9). |
-| `ballot.spec.ts` | Skipped — no ticket yet; nap-dph fills these in. |
+| `sign-in.spec.ts` | Runs. A session through the real flow, and the whitelist refusal for an address that is not on the list. |
+| `submit.spec.ts` | Runs (nap-dph). Validation and its verbatim round trip, two submissions, the cap refusing the third, the non-member refusal, and the form at 320px. |
+| `slate.spec.ts` | Runs (nap-dph). The board lists a film with its submitter, reads as one column on a phone, and is readable signed out. One skip left: withdrawing a film (nap-8yw). |
+| `ballot.spec.ts` | Skipped — there is still no `/ballot` page, handler or ticket. |
 
 Every skip is **unconditional and visible**: the reason names the ticket, the
 title carries it too, and the list reporter prints a `-` for it.
@@ -151,14 +151,71 @@ It intercepts the authorize endpoint, so two things follow for tests:
   mock must too. This test currently fails against `agent/builder-2`
   (`Expected: >= 400 / Received: 200`) and that failure is the finding.
 
+## The season, the whitelist, and who signs in
+
+A migrated database is an **empty** database: no season, and nobody on any
+whitelist. Every journey past the front page needs both, and without them the
+suite does not fail in an interesting way — it signs somebody in successfully
+and then asserts against "No season is open", which reads as a broken page
+rather than as a missing fixture. (That is how nap-dph found it: the e2e stack
+had no seed at all, so `/slate` served the empty board and `/submit` refused
+everyone, including the harness's own user.)
+
+So `make e2e-up` ends with `make e2e-seed`, which runs `cmd/seed` on the host
+against the throwaway database: the 2026 season in `submitting`, with a
+`default_submit_limit` of 2 — the cap the journeys assert — and the four people
+from `internal/devusers`.
+
+### An identity per journey per project
+
+`lib/people.ts` is the browser suite's half of `internal/devusers`: it decides
+who signs in **and** hands `cmd/seed` the list of who is on the whitelist
+(through `SEED_EXTRA_MEMBERS`), so the two cannot drift. When they do drift the
+failure is loud but misleading — sign-in succeeds, the gate says "You're not on
+the list yet", and a test that expected a form gets a friendly refusal.
+
+The people are per **role** and per **Playwright project**, because the
+journeys write and a voter's two picks are spent for good:
+
+| | why it exists |
+| --- | --- |
+| `e2e-submit-<project>` | the submit journeys, which end at the cap |
+| `e2e-slate-<project>` | puts one film on the board for the slate journeys |
+| `e2e-form-<project>` | never submits; the 320px form check borrows nobody's quota |
+| `stranger@example.test` | signs in fine, is on nobody's list, and is **not** seeded — the person row is created by the sign-in itself, which is the state the refusal journeys are about |
+
+Two projects run the same specs against one application and one database, so
+without this the mobile run would spend the cap and the desktop run would
+assert against a quota that was already used up — and pass. Film titles carry
+the project name for the same reason.
+
+`playwright.config.ts` checks its project list against `projectNames` in
+`lib/people.ts` and refuses to load if they disagree, because a project missing
+from that file is a project whose people nothing ever seeds.
+
+### The saved session is deliberately not a member
+
+`storageState.json` holds `e2e-voter@example.test`, who is signed in and on no
+whitelist. That is on purpose: it is **one file shared by both projects**, so
+anything that wrote through it would hit exactly the collision above. A journey
+that needs to be somebody calls `signInAs(page, member(role, project))` from
+`lib/session.ts`, which drives the same flow the global setup does — same
+provider, same discovery, PKCE, code exchange and RS256 verification. There is
+no shortcut there either.
+
 ## Adding a test for a page that has just landed
 
 1. Delete the `test.skip(true, ...)` line.
-2. Write the assertions. The session, when there is one, arrives through the
-   project's `storageState` — there is no sign-in step to write.
-3. For a test that must be signed out:
-   `test.use({ storageState: { cookies: [], origins: [] } })`.
-4. For a specific identity, `queueUser(...)` then go to `/auth/login`.
+2. Write the assertions. `assertionsNotWrittenYet()` is there so that step 1
+   on its own turns the spec red rather than green.
+3. To be a member of this season: `await signInAs(page, member("form", testInfo.project.name))`.
+   Pick a role whose quota you are allowed to spend — see the table above, and
+   add a role rather than borrowing one.
+4. For a test that must be signed out: `test.use({ storageState: signedOut })`.
+5. For any other identity, `signInAs(page, { subject, email, name })`. The
+   provider will sign a token for anybody; whether the application lets them do
+   anything is the whitelist's business, which is what makes the refusal
+   journeys possible.
 
 ## Ports, and other agents
 
@@ -207,6 +264,18 @@ these were checked rather than assumed. Each was reverted afterwards.
 - **Edit a template without regenerating.** Changing a heading in `home.templ`
   and leaving `home_templ.go` alone makes `make e2e` fail in `templ-fresh`
   before a browser starts, naming the stale file.
+
+- **Remove the two-per-person cap.** Deleting the `used >= limit` check in
+  `board.createSubmission` and rebuilding the image fails
+  `a third submission is refused by the two-per-person cap` with `Expected: 409
+  / Received: 303` — the third film was accepted. The GET assertions above it
+  still passed, because the form is hidden by a separate quota check, which is
+  exactly why that test posts directly instead of looking for a button.
+- **Make the slate drop the newest film.** Truncating the row list in
+  `handleSlate` fails three tests at once: the submit journey on the missing
+  confirmation (`Done: Predator [desktop] (1987) is on the board.` — built from
+  the row, so it goes when the row does), and both slate journeys on the card
+  that is not there. Every other test in the same run passed.
 
 ### Stale templates, which is the failure mode this nearly had
 

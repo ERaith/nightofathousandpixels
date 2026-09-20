@@ -1,0 +1,26 @@
+- generic [active] [ref=f1052e1]:
+  - link "Skip to content" [ref=f1052e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f1052e3]:
+    - generic [ref=f1052e4]:
+      - link "Night of a Thousand Pixels" [ref=f1052e5] [cursor=pointer]:
+        - /url: /
+      - navigation "Primary" [ref=f1052e6]:
+        - link "Home" [ref=f1052e7] [cursor=pointer]:
+          - /url: /
+        - link "The slate" [ref=f1052e8] [cursor=pointer]:
+          - /url: /slate
+      - link "Sign in" [ref=f1052e10] [cursor=pointer]:
+        - /url: /auth/login
+  - main [ref=f1052e11]:
+    - generic [ref=f1052e13]:
+      - generic [ref=f1052e14]:
+        - paragraph [ref=f1052e15]: Error 404
+        - heading "That page isn't here" [level=1] [ref=f1052e16]
+      - paragraph [ref=f1052e17]: The link may be out of date, or a season that hasn't opened yet. Nothing is broken — there is just nothing at this address.
+      - link "Back to the front page" [ref=f1052e19] [cursor=pointer]:
+        - /url: /
+  - contentinfo [ref=f1052e20]:
+    - generic [ref=f1052e21]:
+      - paragraph [ref=f1052e22]: Night of a Thousand Pixels · 2026 season
+      - paragraph [ref=f1052e23]: Thirty friends, two picks each, one movie. Every year, archived.

@@ -1,0 +1,67 @@
+- generic [active] [ref=f1069e1]:
+  - link "Skip to content" [ref=f1069e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f1069e3]:
+    - generic [ref=f1069e4]:
+      - link "Night of a Thousand Pixels" [ref=f1069e5] [cursor=pointer]:
+        - /url: /
+      - navigation "Primary" [ref=f1069e6]:
+        - link "Home" [ref=f1069e7] [cursor=pointer]:
+          - /url: /
+        - link "The slate" [ref=f1069e8] [cursor=pointer]:
+          - /url: /slate
+      - generic [ref=f1069e9]:
+        - generic [aria-hidden] [ref=f1069e10]: A
+        - generic [ref=f1069e11]:
+          - generic [ref=f1069e12]: Signed in as
+          - text: Alice Voter
+        - button "Sign out" [ref=f1069e14] [cursor=pointer]
+  - main [ref=f1069e15]:
+    - generic [ref=f1069e16]:
+      - generic [ref=f1069e17]:
+        - paragraph [ref=f1069e18]: Night of a Thousand Pixels 2026
+        - heading "Put a movie on the board" [level=1] [ref=f1069e19]
+        - paragraph [ref=f1069e20]: A title is all we need. A trailer link and a line about why you picked it is what makes somebody else rank it first.
+      - generic [ref=f1069e22]:
+        - paragraph [ref=f1069e23]: 1 pick left of 3.
+        - generic [ref=f1069e24]:
+          - generic [ref=f1069e25]: Title
+          - paragraph [ref=f1069e26]: The name of the film. This is the only part we cannot guess.
+          - textbox "Title" [ref=f1069e27]
+        - generic [ref=f1069e28]:
+          - generic [ref=f1069e29]: Year
+          - paragraph [ref=f1069e30]: Optional, and four digits — it settles which remake you meant.
+          - textbox "Year" [ref=f1069e31]
+        - generic [ref=f1069e32]:
+          - generic [ref=f1069e33]: Trailer link
+          - paragraph [ref=f1069e34]: Optional. A YouTube link plays right on the board; anything else becomes a link.
+          - textbox "Trailer link" [ref=f1069e35]:
+            - /placeholder: https://
+        - generic [ref=f1069e36]:
+          - generic [ref=f1069e37]: Why this one
+          - paragraph [ref=f1069e38]: Optional, and the bit people actually read. A sentence is plenty.
+          - textbox "Why this one" [ref=f1069e39]
+        - generic [ref=f1069e40]:
+          - button "Put it on the board" [ref=f1069e41] [cursor=pointer]
+          - link "Cancel" [ref=f1069e42] [cursor=pointer]:
+            - /url: /slate
+      - generic [ref=f1069e43]:
+        - heading "2 films from you so far" [level=2] [ref=f1069e44]
+        - list [ref=f1069e45]:
+          - listitem [ref=f1069e46]:
+            - heading "The Assassination of Jesse James by the Coward Robert Ford (2007)" [level=3] [ref=f1069e47]
+            - paragraph [ref=f1069e48]: Two and a half hours of Roger Deakins photographing weather, and somehow the tensest thing I have ever sat through. Put it on last and nobody will talk over it.
+            - link "Watch the trailer for The Assassination of Jesse James by the Coward Robert Ford (opens in a new tab)" [ref=f1069e51] [cursor=pointer]:
+              - /url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+              - text: Watch the trailer
+              - generic [ref=f1069e52]: for The Assassination of Jesse James by the Coward Robert Ford (opens in a new tab)
+            - generic [ref=f1069e53]: Submitted by Alice Voter
+          - listitem [ref=f1069e55]:
+            - heading "Hausu (1977)" [level=3] [ref=f1069e56]
+            - paragraph [ref=f1069e57]: A haunted house eats seven schoolgirls. There is no trailer that does it justice and I am not going to try. Trust me.
+            - paragraph [ref=f1069e60]: No trailer
+            - generic [ref=f1069e61]: Submitted by Alice Voter
+  - contentinfo [ref=f1069e63]:
+    - generic [ref=f1069e64]:
+      - paragraph [ref=f1069e65]: Night of a Thousand Pixels
+      - paragraph [ref=f1069e66]: Thirty friends, two picks each, one movie. Every year, archived.

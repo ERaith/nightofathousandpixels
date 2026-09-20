@@ -1,0 +1,3 @@
+[      21ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0
+[      23ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0
+[    6206ms] [ERROR] Refused to apply style from 'http://localhost:7511/static/css/pack.css?v=1789879805606' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://localhost:7511/slate:0

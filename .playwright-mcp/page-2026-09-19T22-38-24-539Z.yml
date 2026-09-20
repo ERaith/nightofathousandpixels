@@ -1,0 +1,55 @@
+- generic [active] [ref=f368e1]:
+  - link "Skip to the good part" [ref=f368e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f368e3]:
+    - generic [ref=f368e4]:
+      - link "A Thousand Pixels After Dark" [ref=f368e5] [cursor=pointer]:
+        - /url: /
+      - navigation "Primary" [ref=f368e6]:
+        - link "Home" [ref=f368e7] [cursor=pointer]:
+          - /url: /
+        - link "Gallery" [ref=f368e8] [cursor=pointer]:
+          - /url: /gallery
+  - main [ref=f368e9]:
+    - generic [ref=f368e10]:
+      - generic [ref=f368e11]:
+        - paragraph [ref=f368e12]: The 2026 Season
+        - heading "Offer something up" [level=1] [ref=f368e13]
+        - paragraph [ref=f368e14]: A title is all I need. A trailer link and one line about why you picked it is what makes somebody else rank it first — and darling, that is the entire game.
+      - generic [ref=f368e15]:
+        - paragraph [ref=f368e16]: 1 offering left of 2.
+        - generic [ref=f368e17]:
+          - generic [ref=f368e18]:
+            - generic [ref=f368e19]: Title
+            - paragraph [ref=f368e20]: The name of the picture. It's the one thing I can't guess.
+            - textbox "Title" [ref=f368e21]
+          - generic [ref=f368e22]:
+            - generic [ref=f368e23]: Year
+            - paragraph [ref=f368e24]: Optional, four digits. It settles which remake you meant, and there is always a remake.
+            - textbox "Year" [ref=f368e25]
+          - generic [ref=f368e26]:
+            - generic [ref=f368e27]: Trailer link
+            - paragraph [ref=f368e28]: Optional. A YouTube link plays right here on the slab; anything else just becomes a link.
+            - textbox "Trailer link" [ref=f368e29]:
+              - /placeholder: https://
+          - generic [ref=f368e30]:
+            - generic [ref=f368e31]: Why this one
+            - paragraph [ref=f368e32]: Optional, and the part everyone actually reads. One good sentence beats three dull ones.
+            - textbox "Why this one" [ref=f368e33]
+          - generic [ref=f368e34]:
+            - button "Put it on the slab" [ref=f368e35] [cursor=pointer]
+            - link "Never mind" [ref=f368e36] [cursor=pointer]:
+              - /url: /2026
+      - generic [ref=f368e37]:
+        - heading "1 victim from you so far" [level=2] [ref=f368e38]
+        - list [ref=f368e39]:
+          - listitem [ref=f368e40]:
+            - iframe [ref=f368e42]
+            - heading "The Thing (1982)" [level=3] [ref=f368e43]
+            - paragraph [ref=f368e44]:
+              - generic [ref=f368e45]: Dragged in by Marcus Webb
+            - paragraph [ref=f368e46]: Twelve men in Antarctica and no way to tell which of them is still a man. The practical effects have not aged a day.
+  - contentinfo [ref=f368e47]:
+    - generic [ref=f368e48]:
+      - paragraph [ref=f368e49]: A Thousand Pixels After Dark · 2026 season
+      - paragraph [ref=f368e50]: Thirty friends, two picks each, one movie, and me. Unpleasant dreams.

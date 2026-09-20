@@ -78,7 +78,12 @@ func run() error {
 		return err
 	}
 
-	for _, p := range devusers.All {
+	cast, err := seedCast()
+	if err != nil {
+		return err
+	}
+
+	for _, p := range cast {
 		personID, err := upsertPerson(ctx, tx, p)
 		if err != nil {
 			return err
@@ -101,9 +106,100 @@ func run() error {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	log.Printf("seeded the %d season (%s) and %d people", seedYear, seedState, len(devusers.All))
+	log.Printf("seeded the %d season (%s) and %d people", seedYear, seedState, len(cast))
 	log.Printf("sign in at /auth/login and pick one of them")
 	return nil
+}
+
+// extraMembersEnv names additional whitelisted people to seed, on top of the
+// development cast.
+//
+// It exists for the browser suite. The four people in internal/devusers are
+// the cast a HUMAN picks from on the provider's consent screen, and that list
+// should stay short enough to read. The e2e suite needs something different:
+// one identity per journey per Playwright project, so that a journey which
+// spends both of somebody's picks cannot leave the next journey - or the same
+// journey in the other project - testing a quota that is already used up. Six
+// more names on the dev picker would be six names nobody developing locally
+// wants to scroll past.
+//
+// The format is the same as the provider's own MOCKOIDC_USERS, deliberately:
+// comma-separated `email|Display Name`. Everybody listed here is a MEMBER of
+// the season - an address that is meant to be refused does not need a row at
+// all, because sign-in creates the person and the whitelist gate turns them
+// away, which is exactly what the refusal journeys assert.
+//
+// e2e/lib/people.ts holds the list and passes it in, so the suite and the
+// whitelist cannot drift: the same file that decides who signs in decides who
+// is on the list.
+const extraMembersEnv = "SEED_EXTRA_MEMBERS"
+
+// seedCast is the development cast plus whatever extraMembersEnv adds.
+func seedCast() ([]devusers.User, error) {
+	extra, err := extraMembers()
+	if err != nil {
+		return nil, err
+	}
+
+	cast := make([]devusers.User, 0, len(devusers.All)+len(extra))
+	cast = append(cast, devusers.All...)
+
+	// A duplicate address would be harmless here - every write is an upsert on
+	// a natural key - but it is always a mistake in the list that produced it,
+	// so it is reported rather than absorbed.
+	seen := make(map[string]bool, len(cast))
+	for _, u := range cast {
+		seen[signin.NormalizeEmail(u.Email)] = true
+	}
+	for _, u := range extra {
+		key := signin.NormalizeEmail(u.Email)
+		if seen[key] {
+			return nil, fmt.Errorf("%s lists %s, which is already in the development cast", extraMembersEnv, u.Email)
+		}
+		seen[key] = true
+		cast = append(cast, u)
+	}
+
+	return cast, nil
+}
+
+// extraMembers parses extraMembersEnv.
+//
+// An entry that does not parse is an error rather than a skipped line. A seed
+// that quietly dropped a name would put the suite in front of a whitelist it
+// believes it is on, and the symptom - "You're not on the list yet" on a page
+// the test expected a form on - looks like a bug in the whitelist gate.
+func extraMembers() ([]devusers.User, error) {
+	raw := strings.TrimSpace(os.Getenv(extraMembersEnv))
+	if raw == "" {
+		return nil, nil
+	}
+
+	var users []devusers.User
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		parts := strings.Split(entry, "|")
+		email := strings.TrimSpace(parts[0])
+		if email == "" || !strings.Contains(email, "@") {
+			return nil, fmt.Errorf("%s entry %q has no email address", extraMembersEnv, entry)
+		}
+
+		u := devusers.User{Email: email, Member: true, Note: "added by " + extraMembersEnv}
+		if len(parts) > 1 {
+			u.DisplayName = strings.TrimSpace(parts[1])
+		}
+		users = append(users, u)
+	}
+
+	if len(users) == 0 {
+		return nil, fmt.Errorf("%s is set to %q but lists no addresses", extraMembersEnv, raw)
+	}
+
+	return users, nil
 }
 
 // querier is the subset of pgx both a pool and a transaction satisfy.

@@ -1,8 +1,30 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { projectNames } from "./lib/people";
 import { stack, storageStatePath } from "./lib/stack";
 
 const s = stack();
+
+// The projects below and lib/people.ts have to name the same set. Every
+// journey that writes signs in as a person derived from its project name, and
+// those people are whitelisted by the seed from the same list - so a project
+// that only exists here is a project whose identities nobody creates, and its
+// journeys would fail on the "You're not on the list yet" page a long way from
+// the cause. Checked at config load, where the message can say so.
+function checkedProjectNames(names: string[]): string[] {
+  const missing = names.filter((n) => !(projectNames as readonly string[]).includes(n));
+  const unused = projectNames.filter((n) => !names.includes(n));
+  if (missing.length > 0 || unused.length > 0) {
+    throw new Error(
+      `e2e: playwright.config.ts and lib/people.ts disagree about the projects. ` +
+        `Only in the config: [${missing.join(", ")}]. Only in people.ts: [${unused.join(", ")}]. ` +
+        `Both lists have to name the same projects, or a project's people are never seeded.`,
+    );
+  }
+  return names;
+}
+
+checkedProjectNames(["mobile", "desktop"]);
 
 export default defineConfig({
   testDir: "./tests",

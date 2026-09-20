@@ -18,15 +18,20 @@ air, golangci-lint) is pinned in `go.mod` and fetched on first use.
 git clone https://github.com/ERaith/nightofathousandpixels.git
 cd nightofathousandpixels
 
-make setup    # postgres + mock OIDC, migrate, generate, seed. Takes a few minutes.
-make dev      # three watchers: templ, server, sqlc
+make dev      # migrates, seeds, then starts the three watchers
 ```
 
 Then open **http://localhost:7331** — the templ proxy, not `:8080`. The proxy is what
 gives you live reload; the app port works but won't refresh itself.
 
-> The proxy only starts listening after templ's first generation pass. If `:7331`
-> refuses the connection for the first few seconds, that's why — it sorts itself out.
+`make dev` is enough on its own: `dev-up` migrates and seeds before the
+watchers start, so a clean clone gets a real season and a whitelist rather
+than a site that serves "Nobody has gone first yet" and refuses every
+submission. Both steps are safe to repeat — see **Test users** below.
+
+Several people (or agents) can run this on one machine at the same time:
+every port, container name, network and volume is derived from `AGENT_SLOT`,
+which defaults to 0.
 
 ### Sign in
 
@@ -65,8 +70,54 @@ Go to **http://localhost:7331/auth/login** and pick one:
 
 ### Look at the themes
 
-```
-http://localhost:7331/gallery
+`make seed-dev` creates a **2026 season in `submitting` state** and these four
+people. All four exist in `person`; only three are on the 2026 whitelist.
+
+It runs on its own as part of `make setup`, `make dev`, `make compose-up` and
+`make e2e`, so in practice you rarely call it. It is **idempotent** — every
+statement is an upsert on a natural key — and **additive**: it never writes
+`google_sub`, so once you have signed in as one of these people, re-seeding
+leaves your identity, your submissions and your quota exactly where they were.
+(It does reset `display_name` to the value below; your next sign-in sets it
+again from the ID token.)
+
+The Go integration tests are the one thing that deliberately runs against an
+**unseeded** database: they build their own fixtures per test, and a shared
+season underneath them would give a test state it did not create. See the note
+above `test-db-up` in the Makefile.
+
+| Address | Name | On the 2026 list? | What it shows |
+|---|---|---|---|
+| `admin@example.test` | Ada Admin | yes, `is_admin` | the admin path — `season_member.is_admin`, per season |
+| `alice@example.test` | Alice Voter | yes | the ordinary member path |
+| `bob@example.test` | Bob Voter | yes | a second member, for anything involving two people |
+| `stranger@example.test` | Sam Stranger | **no** | the "you're not on the list" page — a friendly page, not a 403 |
+
+`stranger@` is not an oversight. Without somebody who is genuinely not on the
+list, the refusal path is something you have to take on trust instead of
+something you can click.
+
+The seeded people have **no `google_sub`** until they first sign in, which is
+the state an admin's whitelist entry is actually in. So the first sign-in as
+each of them exercises the real row-claiming path rather than skipping it.
+
+The seed is additive and idempotent: every statement is an upsert on a natural
+key, re-running it changes nothing, and it never clears a `google_sub` that a
+sign-in has already written. To start over, delete the volume with
+`make compose-nuke`.
+
+### Signing in as somebody else
+
+Sign out (the button on `/me`), then sign in again and pick a different name.
+The session cookie is cleared with attributes matching the ones it was set
+with, so the browser actually drops it.
+
+Tests that drive the browser can skip the picker entirely by queueing an
+identity on the provider first:
+
+```sh
+curl -X POST http://localhost:9000/control/user \
+  -d '{"subject":"sub-alice","email":"alice@example.test","name":"Alice"}'
 ```
 
 Every page under the season's theme pack. `?theme=portal`, `?theme=elvira` or
