@@ -148,7 +148,7 @@ dbcdadf8e9557690927d83c94fea9dbe7842b181420c51d2ad1fd184f6e8d8ad
 # Create database URL secret
 aws secretsmanager create-secret \
     --name nightofpixels/database_url \
-    --secret-string "postgresql://postgres:DelverOfSecrets0-B@nightofpixels.ca3q6uyo6ces.us-east-1.rds.amazonaws.com:5432/nightofpixels" \
+    --secret-string "postgresql://postgres:__REDACTED_ROTATE_THIS__@nightofpixels.ca3q6uyo6ces.us-east-1.rds.amazonaws.com:5432/nightofpixels" \
     --region us-east-1
 
 ```

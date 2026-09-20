@@ -90,3 +90,6 @@ e2e/.auth/
 # python bytecode
 __pycache__/
 *.pyc
+
+# Playwright MCP debris from agents verifying in the main clone (nap-shp)
+.playwright-mcp/
